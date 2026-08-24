@@ -1,0 +1,21 @@
+{
+  "name": "Spark2DDemo",
+  "globIgnorePaths": ["**/wally.toml", "**/Packages"],
+  "tree": {
+    "$className": "DataModel",
+
+    "ReplicatedStorage": {
+      "$path": "demo/ReplicatedStorage",
+
+      "Packages": {
+        "$path": "Packages"
+      }
+    },
+
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "$path": "demo/StarterPlayerScripts"
+      }
+    }
+  }
+}

@@ -1,0 +1,150 @@
+name: Release
+
+# Pushing a v* tag builds Spark2D.rbxm and publishes it as a GitHub release.
+#
+#   git tag v1.0.0
+#   git push origin v1.0.0
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)publish, e.g. v1.0.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: version
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Releasing $TAG (version $VERSION)"
+
+      - name: Install Rojo
+        run: |
+          ROJO_VERSION="$(sed -n 's|^rojo *= *"rojo-rbx/rojo@\(.*\)"|\1|p' rokit.toml | head -1)"
+          echo "Installing Rojo $ROJO_VERSION"
+          curl -fsSL -o rojo.zip \
+            "https://github.com/rojo-rbx/rojo/releases/download/v${ROJO_VERSION}/rojo-${ROJO_VERSION}-linux-x86_64.zip"
+          unzip -q rojo.zip -d "$HOME/.bin"
+          chmod +x "$HOME/.bin/rojo"
+          echo "$HOME/.bin" >> "$GITHUB_PATH"
+
+      - name: Install Wally
+        run: |
+          WALLY_VERSION="$(sed -n 's|^wally *= *"UpliftGames/wally@\(.*\)"|\1|p' rokit.toml | head -1)"
+          echo "Installing Wally $WALLY_VERSION"
+          curl -fsSL -o wally.zip \
+            "https://github.com/UpliftGames/wally/releases/download/v${WALLY_VERSION}/wally-v${WALLY_VERSION}-linux.zip"
+          unzip -q wally.zip -d "$HOME/.bin"
+          chmod +x "$HOME/.bin/wally"
+
+      - name: Resolve dependencies
+        run: |
+          # The released .rbxm has to be self-contained, but nothing is vendored
+          # into the repo -- the dependency is declared only in src/wally.toml.
+          # Install it, then lift the resolved source out of Packages/_Index.
+          (cd src && wally install)
+
+          # Discover the path rather than writing the version into a project file,
+          # so bumping src/wally.toml is the only edit a version change needs.
+          CLEANER="$(find src/Packages/_Index -ipath '*/cleaner/init.luau' | head -1)"
+          if [ -z "$CLEANER" ]; then
+            echo "::error::Cleaner not found under src/Packages/_Index after wally install"
+            exit 1
+          fi
+
+          echo "Vendoring $CLEANER"
+          mkdir -p build/deps
+          cp "$CLEANER" build/deps/Cleaner.luau
+
+      - name: Build Spark2D.rbxm
+        run: |
+          # The Cleaner node in default.project.json is an optional $path, so a bare
+          # checkout still builds without it. That also means a failed resolve would
+          # silently ship a Cleaner-less model, so assert it landed first.
+          if [ ! -f build/deps/Cleaner.luau ]; then
+            echo "::error::build/deps/Cleaner.luau missing; the resolve step did not run"
+            exit 1
+          fi
+
+          rojo build default.project.json -o Spark2D.rbxm
+          ls -l Spark2D.rbxm
+
+      - name: Assemble release notes
+        id: notes
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+
+          # Use the matching CHANGELOG.md section if there is one; otherwise fall
+          # back to GitHub's generated notes so a tag push always produces a release.
+          awk -v version="$VERSION" '
+            $0 ~ "^## +" version "( |$)" { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > RELEASE_NOTES.md
+
+          if [ -s RELEASE_NOTES.md ]; then
+            echo "generate=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "No '## $VERSION' section in CHANGELOG.md; using generated notes."
+            echo "generate=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          {
+            echo
+            echo "## Install"
+            echo
+            echo 'Download `Spark2D.rbxm` below and drag it onto `ReplicatedStorage`.'
+            echo 'It arrives as a single `Spark2D` module with `Cleaner` inside it:'
+            echo
+            echo '```lua'
+            echo 'local Spark2D = require(game.ReplicatedStorage.Spark2D)'
+            echo '```'
+            echo
+            echo 'Wally users need none of this — `wally install` wires it up.'
+          } >> RELEASE_NOTES.md
+
+          cat RELEASE_NOTES.md
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+
+          EXTRA=""
+          if [ "${{ steps.notes.outputs.generate }}" = "true" ]; then
+            EXTRA="--generate-notes"
+          fi
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; updating it."
+            gh release edit "$TAG" --notes-file RELEASE_NOTES.md
+            gh release upload "$TAG" Spark2D.rbxm --clobber
+          else
+            gh release create "$TAG" Spark2D.rbxm \
+              --title "$TAG" \
+              --notes-file RELEASE_NOTES.md \
+              --verify-tag \
+              $EXTRA
+          fi

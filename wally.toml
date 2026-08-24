@@ -1,0 +1,9 @@
+[package]
+name = "cresmarmat-an/spark2d-demo"
+version = "0.1.0"
+registry = "https://github.com/UpliftGames/wally-index"
+realm = "shared"
+private = true
+
+[dependencies]
+Spark2D = "cresmarmat-an/spark2d@1.0.0"

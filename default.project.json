@@ -1,0 +1,11 @@
+{
+  "name": "Spark2D",
+  "globIgnorePaths": ["**/wally.toml", "**/Packages"],
+  "tree": {
+    "$path": "src",
+
+    "Cleaner": {
+      "$path": { "optional": "build/deps/Cleaner.luau" }
+    }
+  }
+}

@@ -1,0 +1,12 @@
+[package]
+name = "cresmarmat-an/spark2d"
+version = "1.0.0"
+description = "Spark2D makes ParticleEmitter-style effects work inside a ScreenGui."
+license = "MIT"
+authors = ["Cresmar Mat-an"]
+registry = "https://github.com/UpliftGames/wally-index"
+realm = "shared"
+include = ["init.luau"]
+
+[dependencies]
+Cleaner = "cresmarmat-an/cleaner@1.0.0"

@@ -1,0 +1,7 @@
+* text=auto eol=lf
+
+# Binary Roblox artifacts must never be line-ending normalized.
+*.rbxm binary
+*.rbxmx binary
+*.rbxl binary
+*.rbxlx binary
