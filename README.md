@@ -31,7 +31,7 @@ Spark2D:Emit(healthBar.HitBurst, 20)
 
 ```toml
 [dependencies]
-Spark2D = "cresmarmat-an/spark2d@1.0.0"
+Spark2D = "cresmarmat-an/spark2d@LATEST_VERSION"
 ```
 
 **Roblox Studio** — download `Spark2D.rbxm` from [Releases](https://github.com/cresmarmat-an/roblox-spark2d/releases) and drag it onto `ReplicatedStorage`. It arrives as one module with `Cleaner` inside it:
@@ -42,7 +42,7 @@ ReplicatedStorage/
       Cleaner
 ```
 
-**Studio plugin** — a companion plugin builds and previews effects visually instead of setting Attributes by hand, and its INSTALL button places the runtime for you in the same shape. It isn't publicly listed yet; until it is, everything here works from a script.
+**[Studio plugin](https://create.roblox.com/store/asset/134544269563881/Spark2D)** — a companion plugin builds and previews effects visually instead of setting Attributes by hand, and its INSTALL button places the runtime for you in the same shape. It isn't publicly listed yet; until it is, everything here works from a script.
 
 Leave `Cleaner` where the installer put it. `Spark2D` looks for it as its own child first and falls back to a sibling, which is how the Wally layout resolves — so both arrangements work, but deleting or relocating it does not.
 
