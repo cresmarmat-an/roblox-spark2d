@@ -61,31 +61,35 @@ jobs:
       - name: Resolve dependencies
         run: |
           # The released .rbxm has to be self-contained, but nothing is vendored
-          # into the repo -- the dependency is declared only in src/wally.toml.
-          # Install it, then lift the resolved source out of Packages/_Index.
+          # into the repo. The dependencies are only declared in src/wally.toml,
+          # so install them and lift the resolved sources out of Packages/_Index.
           (cd src && wally install)
 
-          # Discover the path rather than writing the version into a project file,
-          # so bumping src/wally.toml is the only edit a version change needs.
-          CLEANER="$(find src/Packages/_Index -ipath '*/cleaner/init.luau' | head -1)"
-          if [ -z "$CLEANER" ]; then
-            echo "::error::Cleaner not found under src/Packages/_Index after wally install"
-            exit 1
-          fi
-
-          echo "Vendoring $CLEANER"
+          # Find each path rather than writing versions into a project file, so
+          # bumping src/wally.toml is the only edit a version change needs.
           mkdir -p build/deps
-          cp "$CLEANER" build/deps/Cleaner.luau
+          for DEP in Cleaner Signal Pool; do
+            LOWER="$(echo "$DEP" | tr '[:upper:]' '[:lower:]')"
+            SOURCE="$(find src/Packages/_Index -ipath "*/$LOWER/init.luau" | head -1)"
+            if [ -z "$SOURCE" ]; then
+              echo "::error::$DEP not found under src/Packages/_Index after wally install"
+              exit 1
+            fi
+            echo "Vendoring $SOURCE"
+            cp "$SOURCE" "build/deps/$DEP.luau"
+          done
 
       - name: Build Spark2D.rbxm
         run: |
-          # The Cleaner node in default.project.json is an optional $path, so a bare
-          # checkout still builds without it. That also means a failed resolve would
-          # silently ship a Cleaner-less model, so assert it landed first.
-          if [ ! -f build/deps/Cleaner.luau ]; then
-            echo "::error::build/deps/Cleaner.luau missing; the resolve step did not run"
-            exit 1
-          fi
+          # The dependency nodes in default.project.json are optional paths, so a
+          # bare checkout still builds without them. That also means a failed
+          # resolve would quietly ship a model missing one, so check first.
+          for DEP in Cleaner Signal Pool; do
+            if [ ! -f "build/deps/$DEP.luau" ]; then
+              echo "::error::build/deps/$DEP.luau missing; the resolve step did not run"
+              exit 1
+            fi
+          done
 
           rojo build default.project.json -o Spark2D.rbxm
           ls -l Spark2D.rbxm
@@ -115,13 +119,13 @@ jobs:
             echo "## Install"
             echo
             echo 'Download `Spark2D.rbxm` below and drag it onto `ReplicatedStorage`.'
-            echo 'It arrives as a single `Spark2D` module with `Cleaner` inside it:'
+            echo 'It arrives as a single `Spark2D` module with `Cleaner`, `Signal` and `Pool` inside it:'
             echo
             echo '```lua'
             echo 'local Spark2D = require(game.ReplicatedStorage.Spark2D)'
             echo '```'
             echo
-            echo 'Wally users need none of this — `wally install` wires it up.'
+            echo 'With Wally you can skip this. `wally install` sets it up for you.'
           } >> RELEASE_NOTES.md
 
           cat RELEASE_NOTES.md
@@ -136,6 +140,10 @@ jobs:
           if [ "${{ steps.notes.outputs.generate }}" = "true" ]; then
             EXTRA="--generate-notes"
           fi
+          # A version with a suffix, like 1.0.3-alpha, is a prerelease.
+          case "$TAG" in
+            *-*) EXTRA="$EXTRA --prerelease" ;;
+          esac
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release $TAG already exists; updating it."

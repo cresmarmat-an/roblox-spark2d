@@ -6,6 +6,12 @@
 
     "Cleaner": {
       "$path": { "optional": "build/deps/Cleaner.luau" }
+    },
+    "Signal": {
+      "$path": { "optional": "build/deps/Signal.luau" }
+    },
+    "Pool": {
+      "$path": { "optional": "build/deps/Pool.luau" }
     }
   }
 }

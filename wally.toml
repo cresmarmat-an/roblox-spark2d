@@ -6,4 +6,4 @@ realm = "shared"
 private = true
 
 [dependencies]
-Spark2D = "cresmarmat-an/spark2d@1.0.2"
+Spark2D = "cresmarmat-an/spark2d@1.0.3-alpha"

@@ -1,5 +1,69 @@
 # Changelog
 
+## 1.0.3-alpha
+
+An early look at the next version. Effects are measured relative to their
+parent now, and several attributes have new names, so read the notes on
+upgrading below before switching a game over.
+
+### Changed
+
+- Everything is sized relative to the parent GuiObject. Particles are placed
+  with Scale values worked out from the parent's `AbsolutePosition`,
+  `AbsoluteSize` and `AbsoluteRotation`, so an effect keeps its proportions on
+  every screen size, under a `UIScale` and in layouts, without any setup.
+- Sizes, speeds and accelerations are in studs, like `ParticleEmitter`. A stud
+  is a fraction of the parent, set by the new `StudSize` and
+  `StudSizeRelativeTo` attributes. `SizingMode`, `SizePixels`, `PixelsPerStud`
+  and `PerfectSquare` are gone. `Size` is in studs and defaults to `1`.
+- The direction is an angle. `EmissionAngle` replaces the six-face
+  `EmissionDirection`, so an effect can point any way, not just along the four
+  sides of the screen.
+- `SpreadAngle` is a single number: how far particles fan out across the
+  screen. It's the same either side, and `-360` and `360` both mean every
+  direction. The new `DepthSpreadAngle` tilts particles toward and away from the
+  viewer, which makes some of them travel less far, the way a real emitter's
+  cone looks from the front.
+- Clearer attribute names: `BurstCount` (was `EmitCount`), `StartDelay`
+  (`EmitDelay`), `StopAfter` (`EmitDuration`), `MoveWithParent`
+  (`LockedToGui`), `EmissionOrigin` (`Origin`), `GlowStrength` (`Glow`),
+  `TurbulenceStrength` (`TurbulencePower`) and `SpeedColorRange`
+  (`SpeedRange`).
+- `Acceleration` is a `Vector2`. `WindAcceleration` is gone, since
+  `Acceleration` does the same job.
+- Emission shapes are `Point`, `Line`, `Rectangle` and `Oval`, with
+  `EmissionShapeStyle` choosing between the whole area (`Volume`) and just the
+  edge (`Surface`). The oval fills the parent.
+- `VelocityPerpendicular` turns particles a quarter turn from
+  `VelocityParallel` instead of showing them edge-on. `Free` is now just
+  `FacingCamera`, which is the default.
+
+### Added
+
+- `EmissionDirectionMode`: send particles `AwayFromCenter`, `TowardCenter` or
+  `AwayFromEdge`, in addition to a fixed `Angle`.
+- `ReduceOnLowGraphics` lowers the rate on low graphics settings, the way
+  Roblox thins out real particle effects. On by default.
+- `ResampleMode` for pixel art textures.
+- Particles stop updating while their parent or ScreenGui is hidden.
+- Particles are drawn into their own frame inside the folder and never block
+  clicks on the UI around them.
+- A fast stream spawns particles spread through the frame instead of in one
+  clump per frame.
+- Spark2D now uses the [Signal](https://github.com/cresmarmat-an/roblox-signal)
+  and [Pool](https://github.com/cresmarmat-an/roblox-pool) packages alongside
+  [Cleaner](https://github.com/cresmarmat-an/roblox-cleaner). The release
+  `.rbxm` includes all three.
+
+### Upgrading
+
+- Old attribute names are still read when the new one isn't set, including the
+  old `EmissionDirection`, a `Vector2` `SpreadAngle`, a `Vector3`
+  `Acceleration` and the `Circle`, `Ring` and `Border` shapes.
+- Sizes don't carry over by themselves. The Studio plugin converts every effect
+  in a place when it opens it, measuring each parent so the effect keeps its
+  size. Effects built from scripts need their sizes and speeds set in studs.
+
 ## 1.0.2
 
 ### Changed
@@ -9,9 +73,9 @@ front. Each rule below was measured against real emitters in Studio.
 
 - **`SpreadAngle`** spreads on two separate axes, as `ParticleEmitter` does,
   instead of averaging them into one fan. Only one axis fans particles across
-  the screen — `.Y` for `Top`/`Bottom`/`Front`/`Back`, `.X` for `Left`/`Right`
-  — and the other tilts them toward or away from the viewer, which shortens how
-  far they travel on screen.
+  the screen (`.Y` for `Top`/`Bottom`/`Front`/`Back`, `.X` for `Left`/`Right`).
+  The other tilts them toward or away from the viewer, which shortens how far
+  they travel on screen.
 - **`Drag`** halves a particle's speed every `1/Drag` seconds and slows
   acceleration too, so gravity settles at a terminal speed. Motion is
   integrated exactly, so the path no longer depends on frame rate.
@@ -48,7 +112,7 @@ front. Each rule below was measured against real emitters in Studio.
 - **Effects under a `UIScale` only filled part of their frame** ([#1](https://github.com/cresmarmat-an/roblox-spark2d/issues/1)).
   Spark2D measured the parent in on-screen pixels, which already include the
   `UIScale`, then placed particles with offsets the `UIScale` shrank a second
-  time — a scale of `0.5` packed an effect into the top-left quarter of its
+  time. A scale of `0.5` packed an effect into the top-left quarter of its
   frame. Emission areas, motion and inherited velocity are now all worked out in
   the parent's own unscaled pixels, whether the `UIScale` sits on the parent, on
   an ancestor or on the `ScreenGui`, and with `LockedToGui` on or off.
@@ -67,8 +131,8 @@ First release.
   `SpreadAngle`, `EmissionDirection`, `EmitDelay`/`EmitDuration`, `Drag`,
   `Acceleration`, `Rotation`/`RotSpeed`, `Squash`, and the `Color`,
   `Transparency` and `Size` sequences.
-- Six emission shapes — `Point`, `Circle`, `Ring`, `Rectangle`, `Border` and
-  `Line` — all measured against the parent GuiObject, so they resize with it.
+- Six emission shapes: `Point`, `Circle`, `Ring`, `Rectangle`, `Border` and
+  `Line`. All are measured against the parent GuiObject, so they resize with it.
 - Two sizing modes. `Scale` reads `Size` as a fraction of the parent, tracking
   it live through `UIScale` and responsive layouts; `Offset` reads it as a
   multiplier on `SizePixels` for a fixed pixel size.
