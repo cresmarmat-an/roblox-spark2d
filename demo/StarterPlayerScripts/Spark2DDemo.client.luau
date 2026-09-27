@@ -2,13 +2,14 @@
 --[[
 	Spark2D demo
 	============
-	Three short examples, built entirely from code so that every attribute that
+	Four short examples, built entirely from code so that every attribute that
 	matters is visible right here rather than buried in a .rbxmx you have to open
 	in Studio to read.
 
 	  1. Ambient  -- a continuous emitter that just runs
 	  2. Burst    -- a one-off burst fired on click
 	  3. Trail    -- particles left behind by a GuiObject that moves
+	  4. 3D       -- a fountain that moves in depth too, seen through a camera
 
 	Spark2D drives PlayerGui and hooks RunService, which is why this is a
 	LocalScript in StarterPlayerScripts rather than a Script on the server.
@@ -57,7 +58,7 @@ local row = Instance.new("Frame")
 row.Name = "Row"
 row.AnchorPoint = Vector2.new(0.5, 0.5)
 row.Position = UDim2.fromScale(0.5, 0.5)
-row.Size = UDim2.fromOffset(720, 240)
+row.Size = UDim2.fromOffset(960, 240)
 row.BackgroundTransparency = 1
 row.Parent = screenGui
 
@@ -225,7 +226,48 @@ do
 end
 
 --------------------------------------------------------------------------------------
+-- 4. 3D  --  SimulationMode = "3D" moves particles in depth and projects them
+--------------------------------------------------------------------------------------
+do
+	local stage = Instance.new("Frame")
+	stage.Name = "Stage"
+	stage.AnchorPoint = Vector2.new(0.5, 0.5)
+	stage.Position = UDim2.fromScale(0.5, 0.44)
+	stage.Size = UDim2.fromOffset(120, 120)
+	stage.BackgroundTransparency = 1
+	stage.Parent = createCard(4, "3D")
+
+	-- Everything here is in studs, read the way a ParticleEmitter reads it. The
+	-- emitter is tilted back 35 degrees, so its Top face leans away from the
+	-- camera: particles arc up and away from the viewer, shrinking and slowing
+	-- on screen as they recede, and fall back down behind where they started.
+	createEmitter(stage, "Fountain", {
+		SimulationMode = "3D",
+		Enabled = true,
+		Rate = 45,
+		Origin = Vector2.new(0.5, 0.85),
+		EmitterRotation = Vector3.new(-35, 0, 0),
+		EmitterSize = Vector3.new(0.6, 0, 0.6),
+		EmissionDirection = "Top",
+		SpreadAngle = Vector2.new(12, 12),
+		Lifetime = NumberRange.new(1.4, 1.8),
+		Speed = NumberRange.new(9, 11),
+		Acceleration = Vector3.new(0, -14, 0),
+		Drag = 0.3,
+		CameraDistance = 10,
+		PixelsPerStud = 20,
+		Size = NumberSequence.new(0.18),
+		Color = ColorSequence.new(Color3.fromRGB(130, 255, 200)),
+		Transparency = NumberSequence.new({
+			NumberSequenceKeypoint.new(0, 0),
+			NumberSequenceKeypoint.new(0.8, 0.2),
+			NumberSequenceKeypoint.new(1, 1),
+		}),
+	})
+end
+
+--------------------------------------------------------------------------------------
 
 -- Finds every tagged folder under PlayerGui, registers it, and starts watching for
--- more. The three above are already parented, so they start immediately.
+-- more. The four above are already parented, so they start immediately.
 Spark2D:Init()

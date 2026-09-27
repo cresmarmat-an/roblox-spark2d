@@ -1,6 +1,6 @@
 [package]
 name = "cresmarmat-an/spark2d"
-version = "1.0.0"
+version = "1.0.1"
 description = "Spark2D makes ParticleEmitter-style effects work inside a ScreenGui."
 license = "MIT"
 authors = ["Cresmar Mat-an"]
