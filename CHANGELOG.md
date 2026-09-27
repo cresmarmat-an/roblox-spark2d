@@ -1,5 +1,46 @@
 # Changelog
 
+## 1.0.2
+
+### Changed
+
+Effects now move and look the way a real `ParticleEmitter` does, seen from the
+front. Each rule below was measured against real emitters in Studio.
+
+- **`SpreadAngle`** spreads on two separate axes, as `ParticleEmitter` does,
+  instead of averaging them into one fan. Only one axis fans particles across
+  the screen — `.Y` for `Top`/`Bottom`/`Front`/`Back`, `.X` for `Left`/`Right`
+  — and the other tilts them toward or away from the viewer, which shortens how
+  far they travel on screen.
+- **`Drag`** halves a particle's speed every `1/Drag` seconds and slows
+  acceleration too, so gravity settles at a terminal speed. Motion is
+  integrated exactly, so the path no longer depends on frame rate.
+- **`Squash`** narrows particles and makes them taller for positive values,
+  and widens them for negative ones, with `-1` mirroring `1`. It used to do the
+  reverse, and collapsed as it approached `-1`.
+- **`Rotation`/`RotSpeed`** turn camera-facing particles counter-clockwise for
+  positive values, and **`FacingCamera`** spins by `Rotation` like `Free`
+  instead of pinning particles upright. `FacingCameraWorldUp` is accepted too.
+- **`VelocityParallel`** lays a particle's width along its direction of travel,
+  and **`VelocityPerpendicular`** shows it edge-on while it crosses the screen.
+  Both are foreshortened as `SpreadAngle` tilts particles toward the viewer.
+- **`Lifetime`**: a lifetime of `0` emits nothing, and nothing lives past 20
+  seconds.
+- Each particle rolls its `Size`, `Transparency` and `Squash` envelopes
+  separately rather than sharing one roll.
+
+### Fixed
+
+- **Rotated parents.** Placement is worked out from the parent's
+  `AbsolutePosition`, `AbsoluteSize` and `AbsoluteRotation`. Emission turns with
+  the parent like a rotated part's. Unlocked particles stay where they were
+  emitted while the parent turns. Acceleration stays world-space, so down is
+  still down the screen. Camera-facing particles stay upright on screen rather
+  than turning with the parent.
+- `VelocityInheritance` is turned into the parent's own frame before it's
+  added, so inside a rotated parent particles are flung the way the parent is
+  actually moving on screen.
+
 ## 1.0.1
 
 ### Fixed
@@ -14,31 +55,6 @@
 - Particle positions and pixel sizes are rounded to the nearest pixel rather
   than truncated, which had made every particle up to a pixel too small and
   pulled those left of or above their anchor a pixel toward it.
-
-### Added
-
-- **3D mode.** Set `SimulationMode` to `3D` and particles move in X, Y and Z and
-  are projected onto the screen through a virtual camera, so an effect copied
-  from a real `ParticleEmitter` looks the way it did in the world. It follows
-  `ParticleEmitter`'s own rules, measured against real emitters in Studio:
-  - `Front`/`Back` point away from and toward the viewer, and each
-    `SpreadAngle` axis spreads on its own axis rather than being averaged.
-  - `Acceleration.Z` is used.
-  - `Drag` halves speed every `1/Drag` seconds and damps acceleration too,
-    integrated exactly, so the result doesn't depend on frame rate.
-  - `Squash`, `Rotation` direction and the `VelocityParallel` /
-    `VelocityPerpendicular` orientations match `ParticleEmitter`, including
-    foreshortening as particles travel toward the camera.
-  - `Size` is in studs, with a `Size` of `1` drawing a 2-stud particle.
-  - Lifetimes are capped at 20 seconds.
-- New 3D attributes: `EmitterSize` and `EmitterRotation` describe the emitting
-  part and its orientation relative to the camera; `Shape`, `ShapeStyle`,
-  `ShapeInOut` and `ShapePartial` work as they do on `ParticleEmitter`; and
-  `CameraDistance` sets the strength of the perspective (`0` turns it off).
-- `FacingCameraWorldUp` is accepted as an `Orientation`.
-
-2D mode stays the default and, apart from the two fixes above, behaves exactly
-as before, so existing effects look the same.
 
 ## 1.0.0
 

@@ -16,13 +16,13 @@ Spark2D:Emit(healthBar.HitBurst, 20)
 ## Features
 
 - **Familiar model** — mirrors `ParticleEmitter`: `Rate`, `Lifetime`, `Speed`, `SpreadAngle`, `Color`/`Transparency`/`Size` sequences, `EmissionDirection`, flipbooks
+- **Behaves like the real thing** — `SpreadAngle`, `Drag`, `Squash`, `Rotation`, `Orientation` and `Lifetime` follow the rules a real `ParticleEmitter` uses, measured against one in Studio, so an effect looks the way that emitter does seen from the front
+- **Placed from the parent's `AbsolutePosition`, `AbsoluteSize` and `AbsoluteRotation`** — a `UIScale`, a rotated parent or a layout all land particles where they belong
 - **No custom instance types** — an effect is a `Folder` tagged `UIParticleEmitter` carrying Attributes, readable and editable in the normal Properties/Attributes window
 - **Pooled rendering** — `ImageLabel`s are recycled rather than created and destroyed per particle
 - **Adaptive quality** — tracks rolling frame time and scales particle counts back under load, recovering as frame time improves
-- **3D mode** — particles move in X, Y *and* Z by `ParticleEmitter`'s own rules and are projected onto the screen through a virtual camera, so an effect copied from the 3D world looks the way it did there
 - **2D-native extras** — trails, a fake `Depth` axis, speed-driven colour, turbulence, velocity inheritance, and a faked `Glow`
 - **Two sizing modes** — `Scale` measures particles against the parent GuiObject, `Offset` gives fixed pixel sizes
-- **`UIScale`-aware** — emission areas, motion and sizes all follow any `UIScale` above the effect
 - **Client-side and self-contained** — one module plus `Cleaner`, no other dependencies
 
 ---
@@ -78,35 +78,6 @@ The folder needs a `GuiObject` above it to render — `EmissionShape`, `Origin` 
 
 ---
 
-## 3D mode
-
-Set `SimulationMode` to `3D` and the folder stops being a flat effect and becomes a virtual `ParticleEmitter` seen through a camera. Particles move in all three axes and are projected onto the screen with perspective: ones flying toward the viewer grow and spread out from the emitter, ones flying away shrink and slow down. It's what the Studio plugin's **CONVERT** produces, and the way to make an effect look the same in a `ScreenGui` as it did in the world.
-
-3D mode follows `ParticleEmitter`'s rules rather than Spark2D's 2D ones. The differences were measured against real emitters in Studio:
-
-- **Direction and spread are real 3D.** `Front` and `Back` point away from and toward the viewer instead of folding onto up/down, and `SpreadAngle.X` and `.Y` spread on separate axes exactly as a `ParticleEmitter` does — for a `Top` emitter, `.Y` fans particles left and right and `.X` fans them toward and away from you.
-- **The emitter has a shape.** `Shape`, `ShapeStyle`, `ShapeInOut`, `ShapePartial` and `EmitterSize` describe the part particles spawn from, the same as on a `ParticleEmitter`. `EmitterSize` `(0, 0, 0)` is a single point, like an emitter inside an `Attachment`.
-- **Units are studs.** `Size`, `Speed`, `Acceleration`, `EmitterSize` and `CameraDistance` are in studs, and `PixelsPerStud` turns studs into pixels at the emitter's distance from the camera. A `Size` of `1` draws a particle 2 studs across, as a `ParticleEmitter` does. `SizingMode` and `SizePixels` don't apply.
-- **`Drag`, `Squash` and `Rotation` mean what they mean on a `ParticleEmitter`.** Drag halves a particle's speed every `1/Drag` seconds, gravity included. A positive `Squash` makes particles narrow and tall. A positive `Rotation` turns camera-facing particles counter-clockwise.
-
-`EmitterRotation` is the emitter's orientation relative to the camera, in degrees, read the same way as `BasePart.Orientation`. At `(0, 0, 0)` the emitter sits square-on to the camera — `Top` emits up the screen, `Right` to the right, `Back` toward you and `Front` away.
-
-```lua
-local sparks = Instance.new("Folder")
-sparks:SetAttribute("SimulationMode", "3D")
-sparks:SetAttribute("EmissionDirection", "Top")
-sparks:SetAttribute("SpreadAngle", Vector2.new(25, 45))
-sparks:SetAttribute("Speed", NumberRange.new(8))
-sparks:SetAttribute("Acceleration", Vector3.new(0, -12, 0))
-sparks:SetAttribute("Drag", 0.6)
-sparks:SetAttribute("Size", NumberSequence.new(0.2))
-sparks:SetAttribute("EmitterSize", Vector3.new(4, 1, 2))
-sparks:SetAttribute("EmitterRotation", Vector3.new(0, 30, 15))
-sparks.Parent = frame
-```
-
----
-
 ## Attribute reference
 
 Every `UIParticleEmitter` folder is just a bag of Attributes. This is the full list.
@@ -116,7 +87,6 @@ Every `UIParticleEmitter` folder is just a bag of Attributes. This is the full l
 | Attribute | Type | Default | Notes |
 |---|---|---|---|
 | `Enabled` | bool | `true` | Continuous emission on/off. Doesn't touch particles already in flight — they finish out their `Lifetime` normally either way. |
-| `SimulationMode` | enum | `2D` | `2D` moves particles across the screen plane — the behaviour every effect had before 3D mode existed, unchanged. `3D` moves them in X, Y and Z by `ParticleEmitter`'s rules and projects them through a virtual camera — see [3D mode](#3d-mode). Several rows below mean something different under each. |
 | `Texture` | string | sparkle asset | Any content ID. |
 | `Rate` | number | `20` | Particles per second while `Enabled`. |
 | `EmitCount` | number | `20` | Default burst size — used by `Spark2D:Emit()` when you don't pass a count. |
@@ -125,46 +95,32 @@ Every `UIParticleEmitter` folder is just a bag of Attributes. This is the full l
 | `EmitDuration` | number | `0` | Seconds the stream stays open after the delay. `0` means it never cuts itself off. |
 | `TimeScale` | number | `1` | Per-emitter speed multiplier. There's *also* a global one (`Spark2D:SetTimeScale`) — they multiply together, so it's easy to double up by mistake if you forget one exists. |
 | `ZIndex` | number | `2` | Draw order. Glow copies and trail ghosts render one below this automatically. |
-| `LockedToGui` | bool | `true` | Mirrors `ParticleEmitter.LockedToPart`. `true`: particles stay glued to their parent GuiObject's current position, so the whole cloud moves if the GuiObject does. `false`: particles are placed once in screen space and left there, drifting on their own — the classic "trail left behind a moving thing" look. |
-| `SizingMode` | enum | `Scale` | **2D only** — 3D sizes particles in studs. Decides what the `Size` sequence is measured in. `Scale`: `Size` is a straight fraction of the parent GuiObject's **current** size, exactly like `UDim2.fromScale` — `1` means the particle covers the whole parent, `0.25` means a quarter of it. Particles track the parent live, so a `UIScale` or a responsive layout carries them along, and `SizePixels` plays no part. `Offset`: `Size` is a multiplier on `SizePixels`, giving a fixed pixel size that ignores the parent entirely. |
+| `LockedToGui` | bool | `true` | Mirrors `ParticleEmitter.LockedToPart`. `true`: particles stay glued to their parent GuiObject, so the whole cloud moves, scales and turns with it. `false`: particles are placed once in screen space and left there, drifting on their own — the classic "trail left behind a moving thing" look. |
+| `SizingMode` | enum | `Scale` | Decides what the `Size` sequence is measured in. `Scale`: `Size` is a straight fraction of the parent GuiObject's **current** size, exactly like `UDim2.fromScale` — `1` means the particle covers the whole parent, `0.25` means a quarter of it. Particles track the parent live, so a `UIScale` or a responsive layout carries them along, and `SizePixels` plays no part. `Offset`: `Size` is a multiplier on `SizePixels`, giving a fixed pixel size that ignores the parent entirely. |
 | `PerfectSquare` | bool | `false` | Forces every particle to render square on screen, the same guarantee a `UIAspectRatioConstraint` gives. Off, a `Size` of `1` on a 200×100 parent is a 200×100 rectangle, and `Squash` stretches particles by design. On, both axes are set from the smaller of the two, so the particle stays square *and* stays inside the box. Applies under both sizing modes. |
 
 #### Emission
 
 | Attribute | Type | Default | Notes |
 |---|---|---|---|
-| `EmissionShape` | enum | `Circle` | **2D only** — 3D uses `Shape` and `EmitterSize`. `Point`, `Circle`, `Ring`, `Rectangle`, `Border`, `Line`. `Circle` is a filled circle inscribed in the parent GuiObject; `Ring` is just its edge. Both size themselves off the container automatically, same as `Rectangle`/`Border`. `Point`/`Circle`/`Ring` are centered on `Origin`; `Rectangle`/`Border`/`Line` span the whole parent regardless of `Origin`. |
-| `EmissionDirection` | enum | `Top` | `Top`/`Bottom`/`Left`/`Right`/`Front`/`Back`. In 2D, `Front` and `Back` fold onto the screen's up/down axis, same as `Top`/`Bottom`. In 3D they're real depth — `Front` away from the viewer, `Back` toward — and every face turns with `EmitterRotation`. |
-| `SpreadAngle` | vector2 | `(0,0)` | Degrees either side of `EmissionDirection`. In 2D both axes are blended into one value, since a flat plane only has one rotational axis to spread a cone across. In 3D each axis spreads on its own, the way `ParticleEmitter` does it: for `Top`/`Bottom`, `.X` tilts toward Z and `.Y` toward X; for `Left`/`Right`, `.X` toward Y and `.Y` toward Z; for `Front`/`Back`, `.X` toward Y and `.Y` toward X. |
-| `Origin` | vector2 | `(0.5, 0.5)` | Fractional anchor within the parent's bounds — `(0,0)` top-left, `(1,1)` bottom-right. In 2D it places `Point`/`Circle`/`Ring`; in 3D it's where the emitter's centre sits, and the point the virtual camera looks at. |
-| `Lifetime` | range | `1–2` | Seconds. 3D caps it at 20, and a lifetime of `0` emits nothing, as on a `ParticleEmitter`. |
-| `Speed` | range | `5–5` | Studs per second, scaled by `PixelsPerStud` to get an actual on-screen speed. |
-
-#### 3D emitter
-
-**3D only.** The part a real `ParticleEmitter` would sit in, and where the virtual camera is looking at it from.
-
-| Attribute | Type | Default | Notes |
-|---|---|---|---|
-| `Shape` | enum | `Box` | `Box`, `Sphere`, `Cylinder`, `Disc` — `ParticleEmitter.Shape`. A box emits along `EmissionDirection`; a sphere radially from its centre; a cylinder radially from its axis; a disc across the emitting face. |
-| `ShapeStyle` | enum | `Volume` | `Volume` spawns anywhere inside the shape. `Surface` spawns on its outside only — for a box, on the emitting face. |
-| `ShapeInOut` | enum | `Outward` | `Outward`, `Inward`, or `InAndOut` (each particle picks one at random). |
-| `ShapePartial` | number | `1` | Sphere: the fraction of the sphere, from the `EmissionDirection` pole, that emits (`0.5` a dome). Cylinder: the radius of one end (`0` a cone). Disc: how far the hole in the middle reaches in (`1` solid, near `0` a thin rim). |
-| `EmitterSize` | vector3 | `(0,0,0)` | Studs — the part's `Size`. `(0,0,0)` is a single point, like an emitter inside an `Attachment`. |
-| `EmitterRotation` | vector3 | `(0,0,0)` | Degrees, read like `BasePart.Orientation`: the emitter's orientation relative to the camera. `(0,0,0)` faces the camera square-on. |
-| `CameraDistance` | number | `20` | Studs from the camera to the emitter. Smaller is stronger perspective; `0` turns it off (orthographic). Particles that fly past the camera stop being drawn, as they would in the world. |
+| `EmissionShape` | enum | `Circle` | `Point`, `Circle`, `Ring`, `Rectangle`, `Border`, `Line`. `Circle` is a filled circle inscribed in the parent GuiObject; `Ring` is just its edge. Both size themselves off the container automatically, same as `Rectangle`/`Border`. `Point`/`Circle`/`Ring` are centered on `Origin`; `Rectangle`/`Border`/`Line` span the whole parent regardless of `Origin`. |
+| `EmissionDirection` | enum | `Top` | `Top`/`Bottom`/`Left`/`Right`/`Front`/`Back`, relative to the parent GuiObject — a rotated parent turns it, like a rotated part. `Front` and `Back` both fold onto the screen's up/down axis, same as `Top`/`Bottom` — there's no depth axis to point along in flat UI. |
+| `SpreadAngle` | vector2 | `(0,0)` | Degrees either side of `EmissionDirection`, one axis each, exactly as a `ParticleEmitter` spreads them — and then seen from the front. Only one axis fans particles across the screen: `.Y` for `Top`/`Bottom`/`Front`/`Back`, `.X` for `Left`/`Right`. The other tilts particles toward and away from the viewer, which on a flat screen shows up as some of them travelling a shorter way instead of fanning out. `360` on both covers every direction. |
+| `Origin` | vector2 | `(0.5, 0.5)` | Fractional anchor within the parent's bounds for `Point`/`Circle`/`Ring`, and the height of a `Line` — `(0,0)` top-left, `(1,1)` bottom-right. |
+| `Lifetime` | range | `1–2` | Seconds. As on a `ParticleEmitter`, a lifetime of `0` emits nothing and nothing lives past 20 seconds. |
+| `Speed` | range | `5–5` | Scaled by `PixelsPerStud` to get an actual on-screen speed. |
 
 #### Motion
 
 | Attribute | Type | Default | Notes |
 |---|---|---|---|
-| `Acceleration` | vector3 | `(0,0,0)` | Studs per second², with `Y` up the screen (so a normal "gravity" value that's negative in 3D correctly pulls particles *down*). In 2D `Z` is ignored — see `Depth` for a fake third axis. In 3D `Z` is toward the viewer, and the vector is in the camera's frame: `EmitterRotation` turns the emitter but not the gravity, the same as a rotated part's `ParticleEmitter`. |
-| `Drag` | number | `0` | 2D: linear damping, `Drag` × velocity taken off every second. 3D: `ParticleEmitter`'s drag — speed halves every `1/Drag` seconds, and acceleration is damped too, so gravity settles at a terminal speed. |
+| `Acceleration` | vector3 | `(0,0,0)` | `X`/`Y` used, `Y` inverted to match screen coordinates (so a normal "gravity" value that's negative in 3D correctly pulls particles *down* the screen). Like a `ParticleEmitter`'s, it's world-space: down stays down the screen however the parent is turned. `Z` points at the viewer and doesn't move anything on a flat screen. |
+| `Drag` | number | `0` | `ParticleEmitter`'s drag: a particle's speed halves every `1/Drag` seconds. It slows acceleration too, so gravity settles at a terminal speed instead of building forever. Motion is worked out exactly rather than frame by frame, so it follows the same path at any frame rate. |
 | `WindAcceleration` | vector2 | `(0,0)` | A flat push applied to every particle in this emitter, on top of `Acceleration`. |
 | `VelocityInheritance` | number | `0` | How much of the parent GuiObject's *own* on-screen motion gets added to a particle's velocity the instant it spawns. Above `0` on something moving (a flying projectile icon, a dragged card), newly spawned particles fling off in the direction it's travelling. |
 | `TurbulencePower` / `TurbulenceFrequency` / `TurbulenceSpeed` | number | `0` / `1` / `1` | Perlin-noise wobble layered into acceleration. Power is strength (`0` = off), Frequency is how tightly-packed the noise field is in space, Speed is how fast it evolves over time. |
-| `Rotation` / `RotSpeed` | range | `0–0` / `0–0` | Initial spin and spin speed, degrees. In 2D a positive value turns clockwise, like `GuiObject.Rotation`. In 3D it follows `ParticleEmitter`: camera-facing particles turn counter-clockwise, velocity-aligned ones clockwise from their direction of travel. |
-| `Orientation` | enum | `Free` | **2D:** `Free` (uses `Rotation`/`RotSpeed` as-is), `VelocityParallel`/`VelocityPerpendicular` (locks rotation to the direction of travel — good for streaks and sparks that should point where they're going), `FacingCamera`/`FacingCameraWorldUp` (always upright — there's no real camera in a 2D GUI, so this just means "ignore rotation"). **3D:** the `ParticleEmitter` modes. `Free`, `FacingCamera` and `FacingCameraWorldUp` face the viewer and spin by `Rotation`. `VelocityParallel` lays the particle's width along its direction of travel, foreshortened as that direction turns toward the camera. `VelocityPerpendicular` faces the particle along its direction of travel, so one crossing the screen is seen edge-on. |
+| `Rotation` / `RotSpeed` | range | `0–0` / `0–0` | Initial spin and spin speed, degrees, turning the way a `ParticleEmitter`'s particles do: counter-clockwise for a positive value on camera-facing particles, clockwise from the direction of travel on velocity-aligned ones. Camera-facing particles keep their own rotation on screen even inside a rotated parent, as billboards do. |
+| `Orientation` | enum | `Free` | The `ParticleEmitter` modes, seen from the front. `Free`, `FacingCamera` and `FacingCameraWorldUp` face the viewer and spin by `Rotation`. `VelocityParallel` lays the particle's width along its direction of travel — good for streaks and sparks that should point where they're going. `VelocityPerpendicular` faces the particle along its direction of travel, so, as with a real emitter seen side-on, one crossing the screen shows as a thin sliver and only opens up when `SpreadAngle` tilts it toward the viewer. |
 
 #### Appearance
 
@@ -172,15 +128,15 @@ Every `UIParticleEmitter` folder is just a bag of Attributes. This is the full l
 |---|---|---|---|
 | `Color` | colorseq | white | |
 | `Transparency` | numseq | `0` | |
-| `Size` | numseq | `0.2` | The size multiplier over the particle's lifetime. In 2D what it multiplies depends on `SizingMode`. Quickest way to see the difference: set `Size` to `1` and toggle `SizingMode` — under `Scale` the particle exactly fills the parent, under `Offset` it's `SizePixels` across. In 3D it's studs, as on a `ParticleEmitter`: a `Size` of `1` is a particle 2 studs across, `2 × PixelsPerStud` pixels before perspective. |
-| `SizePixels` | number | `100` | How many pixels a `Size` value of `1` maps to. **2D `Offset` sizing only** — ignored under `Scale`, where `Size` is already a fraction of the parent, and in 3D, where it's studs. |
-| `PixelsPerStud` | number | `50` | Turns studs into pixels. In 2D it scales `Speed` and `Acceleration`, and is just a tuning constant — "1 stud" doesn't mean anything fixed on a flat screen. In 3D it's the screen scale at the emitter's distance from the camera, and applies to sizes and the emitter's shape as well. |
-| `Squash` | numseq | `0` | 2D: positive stretches width and squashes height, negative the reverse. 3D: `ParticleEmitter`'s squash — positive narrows the particle by `1 + Squash` and makes it that much taller, negative the other way round. |
+| `Size` | numseq | `0.2` | The size multiplier over the particle's lifetime. What it multiplies depends on `SizingMode`. Quickest way to see the difference: set `Size` to `1` and toggle `SizingMode` — under `Scale` the particle exactly fills the parent, under `Offset` it's `SizePixels` across. |
+| `SizePixels` | number | `100` | How many pixels a `Size` value of `1` maps to. **`Offset` sizing only** — ignored under `Scale`, where `Size` is already a fraction of the parent. A `ParticleEmitter` particle of `Size` `1` is 2 studs across, so `2 × PixelsPerStud` keeps an effect in the same proportions as the real one — which is what the defaults (`100` and `50`) already do. |
+| `PixelsPerStud` | number | `50` | Same conversion, but for `Speed` and `Acceleration`. Because there's no real camera distance in a GUI, both of these are just tuning constants — "1 stud" doesn't mean anything fixed on screen. |
+| `Squash` | numseq | `0` | `ParticleEmitter`'s squash: positive narrows the particle by `1 + Squash` and makes it that much taller, negative does the reverse, and `-1` mirrors `1`. |
 | `Glow` | number | `0` | `0`–`1`. Draws a second copy behind each particle, brightened and scaled up ~1.9x, faded by this amount. It's the closest thing to `LightEmission` that's possible here — GUI has no real additive blend mode, so this is a faked bloom, not the real thing. |
 
 #### Depth
 
-**2D only.** A fake third axis. There's no real perspective in 2D mode, so this is a per-particle size/speed/fade trick that reads as "distance" without actually being one. 3D mode has the real thing and ignores both.
+A fake third axis. There's no real perspective in a flat GUI, so this is a per-particle size/speed/fade trick that reads as "distance" without actually being one.
 
 | Attribute | Type | Default | Notes |
 |---|---|---|---|
@@ -419,11 +375,18 @@ end
 
 **Nothing renders, and there's no warning either.** Check you're requiring from a **LocalScript**. Spark2D drives `PlayerGui` and hooks `RunService`; it does nothing useful on the server.
 
-**An effect ported from a 3D `ParticleEmitter` doesn't look like the original.** Set `SimulationMode` to `3D`. In 2D, `Front`/`Back` fold onto up/down, the two `SpreadAngle` axes are averaged into one, `Acceleration.Z` is dropped, and `Drag` and `Squash` follow Spark2D's own flat rules — each of which changes how the effect reads. 3D mode copies all of them, plus the emitter's shape, rotation and perspective. The Studio plugin's **CONVERT** sets all of this up for you from the camera's current view.
+**An effect ported from a 3D `ParticleEmitter` moves too fast or too slow.** `PixelsPerStud`. There's no camera distance in a flat GUI, so "1 stud" from the original effect doesn't correspond to any fixed number of pixels — the numeric values carry over faithfully, but you still have to pick a scale.
 
-**An effect ported from 3D moves too fast or too slow, or is the wrong size.** `PixelsPerStud`. It's the one number that decides how big a stud is on screen. In 3D mode it scales sizes and motion together, so changing it zooms the whole effect in or out without changing how it looks. In 2D it only scales motion, and under the default `Scale` sizing a `Size` of `1` already means "the parent's whole size" — a `Size` of `3` fills the screen. For a 2D effect, scale the `Size` sequence down, or switch `SizingMode` to `Offset` and set `SizePixels` to twice `PixelsPerStud`, which matches a `ParticleEmitter`'s proportions.
+**An effect ported from 3D is enormous.** Sizing mode. A 3D emitter's `Size` values are stud-scaled, and under the default `Scale` sizing a `Size` of `1` already means "the parent's whole size" — so a `Size` of `3` is three times the parent and fills the screen. Either scale the `Size` sequence down, or switch `SizingMode` to `Offset` and set `SizePixels` to twice `PixelsPerStud`, which keeps the real emitter's proportions.
 
-**Particles only fill part of their frame under a `UIScale`.** Fixed in 1.0.1. Spark2D measured the parent in on-screen pixels, which already include the `UIScale`, then placed particles with offsets that the `UIScale` shrinks a second time — a scale of `0.5` packed the effect into the top-left quarter. Update the runtime; everything now works in the parent's own pixels.
+**Particles only fill part of their frame under a `UIScale`.** Fixed in 1.0.1. Spark2D measured the parent in on-screen pixels, which already include the `UIScale`, then placed particles with offsets that the `UIScale` shrank a second time — a scale of `0.5` packed the effect into the top-left quarter. Update the runtime.
+
+**An effect built on 1.0.0 looks different after updating.** 1.0.2 made the flat simulation follow a real `ParticleEmitter`'s rules, and a few differ from what 1.0.0 did:
+- `SpreadAngle`: only one axis fans particles across the screen now (`.Y` for `Top`/`Bottom`, `.X` for `Left`/`Right`); the other shortens their travel instead. Put the fan you want on that axis.
+- `Rotation`/`RotSpeed` on camera-facing particles turn the other way — negate them to get the old direction back.
+- `FacingCamera` spins by `Rotation` like `Free` instead of staying upright; set `Rotation` and `RotSpeed` to `0` for upright particles.
+- `VelocityParallel` lines the particle's width up with its travel instead of its height; a streak texture drawn vertically wants turning 90°, or `Rotation` set to `90`.
+- `Squash` narrows for positive values instead of widening, and `Drag` is gentler — a particle keeps half its speed after `1/Drag` seconds.
 
 **Particles got much bigger after updating Spark2D.** `Scale` sizing changed meaning. `Size` used to be multiplied by `SizePixels` and then divided by the parent's size; it's now read directly as a fraction of the parent. An effect built under the old behaviour wants its `Size` sequence divided by roughly the parent's size in pixels — or switch it to `Offset`, where `SizePixels` works exactly as it always did.
 

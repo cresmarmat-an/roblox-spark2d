@@ -7,10 +7,11 @@
 	ScreenGui. Emitter data lives as Attributes on a Folder tagged "UIParticleEmitter";
 	this engine recycles pooled ImageLabels to draw the particles.
 
-	Two simulations share the one loop. 2D moves particles across the screen
-	plane. 3D (SimulationMode = "3D") moves them in X, Y and Z by
-	ParticleEmitter's own rules and projects them through a virtual camera, so an
-	effect converted from the 3D world looks the way it did there.
+	The parent GuiObject stands in for the part a ParticleEmitter would sit in, and
+	the screen is that part seen from the front. Particles move the way a real
+	emitter's look from there, by ParticleEmitter's own rules, and everything is
+	measured off the parent's AbsolutePosition, AbsoluteSize and AbsoluteRotation —
+	so a UIScale, a rotated parent or a layout all land particles where they belong.
 ======================================================================================
 ]]
 
@@ -32,41 +33,30 @@ local MAX_DT	= 1 / 15
 local PREALLOC	= 32
 local LN2		= math.log(2)
 
--- 3D mode mirrors a real ParticleEmitter's hard limits.
-local MAX_LIFETIME_3D	= 20
--- A particle whose depth puts it within this fraction of the camera distance
--- in front of the lens (or behind it) isn't drawn: its perspective scale would
--- blow up towards infinity, and a real camera would have clipped it anyway.
-local NEAR_CLIP			= 0.05
--- VelocityPerpendicular particles seen exactly edge-on would collapse to zero
--- width and vanish; a real quad still rasterises as a sliver.
+-- ParticleEmitter caps a particle's lifetime at 20 seconds.
+local MAX_LIFETIME		= 20
+-- A VelocityPerpendicular particle crossing the screen is seen exactly edge-on
+-- and would collapse to nothing; a real quad still rasterises as a sliver.
 local MIN_FORESHORTEN	= 0.03
 
--- 2D mode: the one screen-plane direction each face emits along.
-local DIRECTION_MAP = {
-	Top		= Vector2.new(0, -1),
-	Bottom	= Vector2.new(0,  1),
-	Left	= Vector2.new(-1, 0),
-	Right	= Vector2.new(1,  0),
-	Front	= Vector2.new(0, -1),
-	Back	= Vector2.new(0,  1),
-}
-
--- 3D mode: the frame each face emits from, in the emitter's own space, with
--- the camera's axes as the reference (X right, Y up, Z towards the viewer).
---   L  the face normal particles leave along.
---   U  the axis SpreadAngle.X tilts particles towards.
---   R  the axis SpreadAngle.Y tilts particles towards, and a Cylinder's axis.
--- U and R aren't guesses: they're what a real ParticleEmitter does, measured in
--- Studio. It isn't "X spreads along X" — a Top emitter's SpreadAngle.X fans
--- particles out along Z, and its .Y along X.
-local FACE_FRAMES = {
-	Top		= { L = Vector3.new(0, 1, 0),	U = Vector3.new(0, 0, 1),	R = Vector3.new(1, 0, 0) },
-	Bottom	= { L = Vector3.new(0, -1, 0),	U = Vector3.new(0, 0, 1),	R = Vector3.new(1, 0, 0) },
-	Right	= { L = Vector3.new(1, 0, 0),	U = Vector3.new(0, 1, 0),	R = Vector3.new(0, 0, 1) },
-	Left	= { L = Vector3.new(-1, 0, 0),	U = Vector3.new(0, 1, 0),	R = Vector3.new(0, 0, 1) },
-	Front	= { L = Vector3.new(0, 0, -1),	U = Vector3.new(0, 1, 0),	R = Vector3.new(1, 0, 0) },
-	Back	= { L = Vector3.new(0, 0, 1),	U = Vector3.new(0, 1, 0),	R = Vector3.new(1, 0, 0) },
+-- The frame each face emits along, seen from the front: X right, Y up, Z toward
+-- the viewer.
+--   L  the direction particles leave in.
+--   U  the axis SpreadAngle.X tilts them toward.
+--   R  the axis SpreadAngle.Y tilts them toward.
+-- U and R are what a real ParticleEmitter does, measured in Studio. A Top
+-- emitter's SpreadAngle.X tilts particles toward and away from the viewer rather
+-- than sideways, which from the front reads as some particles rising more slowly
+-- instead of fanning out; its .Y is the one that fans them left and right.
+-- A flat screen has no depth to emit along, so Front and Back fold onto up and
+-- down, and carry their spread axes over with them.
+local EMISSION_FRAMES = {
+	Top		= { L = Vector3.new(0, 1, 0),	U = Vector3.zAxis,	R = Vector3.xAxis },
+	Front	= { L = Vector3.new(0, 1, 0),	U = Vector3.zAxis,	R = Vector3.xAxis },
+	Bottom	= { L = Vector3.new(0, -1, 0),	U = Vector3.zAxis,	R = Vector3.xAxis },
+	Back	= { L = Vector3.new(0, -1, 0),	U = Vector3.zAxis,	R = Vector3.xAxis },
+	Right	= { L = Vector3.new(1, 0, 0),	U = Vector3.yAxis,	R = Vector3.zAxis },
+	Left	= { L = Vector3.new(-1, 0, 0),	U = Vector3.yAxis,	R = Vector3.zAxis },
 }
 
 -- Flipbook frames-per-row for each square grid layout ("None" => no flipbook).
@@ -108,21 +98,6 @@ local DEFAULTS = {
 	SizingMode			= "Scale",
 	PerfectSquare		= false,
 
-	-- Simulation --------------------------------------------------------------------
-	-- 2D: the flat engine every effect used before 3D mode existed, unchanged.
-	-- 3D: particles move in X, Y and Z by ParticleEmitter's own rules and are
-	-- projected onto the screen through a virtual camera.
-	SimulationMode		= "2D",		-- 2D | 3D
-
-	-- 3D mode only -------------------------------------------------------------------
-	EmitterSize			= Vector3.new(0, 0, 0),	-- studs; the emitting part's Size. Zero = a point, like an Attachment
-	EmitterRotation		= Vector3.new(0, 0, 0),	-- degrees; the emitter's orientation relative to the camera
-	CameraDistance		= 20,		-- studs from the camera to the emitter; 0 = no perspective
-	Shape				= "Box",	-- Box | Sphere | Cylinder | Disc
-	ShapeStyle			= "Volume",	-- Volume | Surface
-	ShapeInOut			= "Outward",-- Outward | Inward | InAndOut
-	ShapePartial		= 1,
-
 	-- Timing ------------------------------------------------------------------------
 	EmitDelay			= 0,
 	EmitDuration		= 0,		-- 0 = infinite
@@ -137,7 +112,7 @@ local DEFAULTS = {
 
 	-- Appearance extras -------------------------------------------------------------
 	Glow				= 0,		-- 0 = off, 1 = strong faux-additive bloom
-	Orientation			= "Free",	-- Free | VelocityParallel | VelocityPerpendicular | FacingCamera
+	Orientation			= "Free",	-- Free | FacingCamera | FacingCameraWorldUp | VelocityParallel | VelocityPerpendicular
 
 	-- Depth (the 3D "Z" approximation) ----------------------------------------------
 	Depth				= NumberRange.new(0, 0),
@@ -297,37 +272,6 @@ local function attr(folder, name)
 	return v
 end
 
--- attr(), falling back to the default when the stored value is the wrong type.
--- For the attributes the 3D maths leans on, where a stray string would
--- otherwise surface as an arithmetic error deep inside the update loop.
-local function typedAttr(folder, name)
-	local v = folder:GetAttribute(name)
-	local d = DEFAULTS[name]
-	if v == nil or typeof(v) ~= typeof(d) then return d end
-	return v
-end
-
--- The combined UIScale acting on children of `base`: every UIScale from `base`
--- up to its LayerCollector, multiplied together.
---
--- AbsoluteSize and AbsolutePosition are post-scale screen pixels, but a
--- particle's offset Position is scaled AGAIN on its way to the screen. Mixing
--- the two squared the scale — a UIScale of 0.5 packed the whole effect into the
--- top-left quarter of its frame. Dividing screen measurements by this factor
--- turns them back into the parent's own unscaled pixels, where offsets live.
-local function uiScaleOf(base)
-	local s = 1
-	local inst = base
-	while inst do
-		local u = inst:FindFirstChildWhichIsA("UIScale")
-		if u then s *= u.Scale end
-		if inst:IsA("LayerCollector") then break end
-		inst = inst.Parent
-	end
-	-- A UIScale of 0 hides everything anyway; just don't divide by it.
-	return math.max(s, 1e-4)
-end
-
 --------------------------------------------------------------------------------------
 -- SPARK2D SINGLETON
 --------------------------------------------------------------------------------------
@@ -398,44 +342,17 @@ local function buildConfig(emitter)
 	c.FlipbookStartRandom = attr(f, "FlipbookStartRandom")
 	c.FlipbookFramerate	= attr(f, "FlipbookFramerate")
 
-	-- Precompute screen-space acceleration once (world +Y up -> screen -Y). Z is
-	-- toward the viewer, and only 3D mode has anywhere to put it.
+	-- Precompute screen-space acceleration once (world +Y up -> screen -Y). Z
+	-- points at the viewer and doesn't move anything on a flat screen.
 	c.accelScreenX =  c.Acceleration.X * c.PixelsPerStud
 	c.accelScreenY = -c.Acceleration.Y * c.PixelsPerStud
-	c.accelScreenZ =  c.Acceleration.Z * c.PixelsPerStud
 
-	c.is3D = attr(f, "SimulationMode") == "3D"
-	-- Scale sizing is a 2D idea: 3D mode sizes particles in studs, like the
-	-- ParticleEmitter it copies.
-	c.useScaleSizing = (not c.is3D) and c.SizingMode == "Scale"
-
-	if c.is3D then
-		local face = FACE_FRAMES[c.EmissionDirection] or FACE_FRAMES.Top
-		local rot = typedAttr(f, "EmitterRotation")
-		c.face = face
-		-- Same convention as BasePart.Orientation, so a value read straight off
-		-- a part (relative to the camera) means what it says.
-		c.rotCF = CFrame.fromOrientation(math.rad(rot.X), math.rad(rot.Y), math.rad(rot.Z))
-		c.spreadX = math.rad(c.SpreadAngle.X)
-		c.spreadY = math.rad(c.SpreadAngle.Y)
-		-- Drag halves a particle's speed every 1/Drag seconds: v = v0 * 2^(-Drag*t).
-		c.dragK = c.Drag * LN2
-		c.halfSize = typedAttr(f, "EmitterSize") * (0.5 * c.PixelsPerStud)
-		c.cameraPx = math.max(0, typedAttr(f, "CameraDistance")) * c.PixelsPerStud
-		c.Shape = attr(f, "Shape")
-		c.ShapeStyle = attr(f, "ShapeStyle")
-		c.ShapeInOut = attr(f, "ShapeInOut")
-		c.ShapePartial = clamp(typedAttr(f, "ShapePartial"), 0, 1)
-	else
-		local base = DIRECTION_MAP[c.EmissionDirection] or DIRECTION_MAP.Top
-		c.baseAngle = math.atan2(base.Y, base.X)
-		-- A 2D plane has one rotational axis to spread a cone across; 3D has two
-		-- (SpreadAngle.X and .Y independently). Blend both into that one axis instead
-		-- of reading only .X, so a converted ParticleEmitter that leaned on a wide
-		-- SpreadAngle.Y (a tall vertical fan, say) doesn't collapse to looking
-		-- identical to a (0, 0) spread just because .Y has nowhere else to go.
-		c.spreadRad = math.rad((c.SpreadAngle.X + c.SpreadAngle.Y) * 0.5)
-	end
+	c.frame = EMISSION_FRAMES[c.EmissionDirection] or EMISSION_FRAMES.Top
+	c.spreadX = math.rad(c.SpreadAngle.X)
+	c.spreadY = math.rad(c.SpreadAngle.Y)
+	-- ParticleEmitter's drag halves a particle's speed every 1/Drag seconds:
+	-- v = v0 * 2^(-Drag * t), which is exponential decay at Drag * ln 2.
+	c.dragK = c.Drag * LN2
 
 	-- Sequence LUTs (value + envelope) ----------------------------------------------
 	emitter.sizeLUT,   emitter.sizeEnv   = buildNumberLUT(attr(f, "Size"))
@@ -486,6 +403,69 @@ local function isRenderable(base)
 	return base ~= nil
 		and isMounted(base)
 		and base:IsA("GuiBase2d")
+end
+
+--------------------------------------------------------------------------------------
+-- WHERE THE PARENT IS ON SCREEN
+--------------------------------------------------------------------------------------
+-- The combined UIScale acting on children of `base`: every UIScale from `base`
+-- up to its LayerCollector, multiplied together. A particle's offset Position is
+-- in the parent's own unscaled pixels and gets multiplied by this on its way to
+-- the screen.
+local function uiScaleOf(base)
+	local s = 1
+	local inst = base
+	while inst do
+		local u = inst:FindFirstChildWhichIsA("UIScale")
+		if u then s *= u.Scale end
+		if inst:IsA("LayerCollector") then break end
+		inst = inst.Parent
+	end
+	-- A UIScale of 0 hides everything anyway; just don't divide by it.
+	return math.max(s, 1e-4)
+end
+
+-- Read the parent's placement off its Absolute properties, once per frame.
+--
+-- AbsolutePosition and AbsoluteSize are the parent's box in screen pixels —
+-- UIScale and any rotated ancestors already applied — and AbsoluteRotation is
+-- how far it's turned about that box's centre. Together they say exactly where
+-- any point inside the parent lands on screen, which is what lets unlocked
+-- particles stay put in screen space and world-space forces point the right way
+-- inside a scaled or rotated parent.
+--
+-- AbsoluteSize and AbsolutePosition alone aren't enough to place a particle,
+-- because an offset Position is scaled AGAIN on its way to the screen: mixing
+-- the two squared the scale, and a UIScale of 0.5 packed the whole effect into
+-- the top-left quarter of its frame. Dividing by the UIScale factor turns
+-- screen measurements back into the parent's own pixels, where offsets live.
+local function refreshView(emitter)
+	local base = emitter.base
+	local pos, size = base.AbsolutePosition, base.AbsoluteSize
+	local s = uiScaleOf(base)
+	local rot = base.AbsoluteRotation
+	local rad = math.rad(rot)
+	emitter.uiScale = s
+	emitter.rotation = rot
+	emitter.cos, emitter.sin = math.cos(rad), math.sin(rad)
+	emitter.halfW, emitter.halfH = size.X * 0.5, size.Y * 0.5
+	emitter.centerX, emitter.centerY = pos.X + size.X * 0.5, pos.Y + size.Y * 0.5
+	emitter.localSize = size / s
+	emitter.referenceSize = Vector2.new(math.max(size.X, 1), math.max(size.Y, 1))
+end
+
+-- A point in the parent's own pixels (from its top-left) -> screen pixels.
+local function toScreen(e, lx, ly)
+	local x = lx * e.uiScale - e.halfW
+	local y = ly * e.uiScale - e.halfH
+	return e.centerX + x * e.cos - y * e.sin, e.centerY + x * e.sin + y * e.cos
+end
+
+-- Screen pixels -> a point in the parent's own pixels. The inverse of toScreen.
+local function toLocal(e, sx, sy)
+	local x, y = sx - e.centerX, sy - e.centerY
+	local s = e.uiScale
+	return (x * e.cos + y * e.sin + e.halfW) / s, (y * e.cos - x * e.sin + e.halfH) / s
 end
 
 --------------------------------------------------------------------------------------
@@ -576,106 +556,24 @@ local function emitPosition(c, size)
 end
 
 --------------------------------------------------------------------------------------
--- 3D EMISSION (by Shape) -- returns an offset from the emitter centre and a unit
--- direction, both in camera space (X right, Y up, Z toward the viewer), in pixels
+-- EMISSION DIRECTION -- a unit direction in the parent's frame: X right, Y down,
+-- plus how much of it points at the viewer
 --------------------------------------------------------------------------------------
--- Tilt `L` by up to ±spreadX towards U, then by up to ±spreadY towards R.
--- Stays unit length, and 360 on both axes covers the whole sphere, which is what
--- ParticleEmitter promises for that setting.
-local function spreadDirection(c, L, U, R)
+-- Tilt the face's direction by up to ±SpreadAngle.X toward U and ±SpreadAngle.Y
+-- toward R, as a ParticleEmitter does, then look at it from the front. Whatever
+-- tilted toward or away from the viewer can't move a particle on a flat screen,
+-- so it only shortens the on-screen motion — exactly how the real emitter's
+-- cone looks from in front of the part. 360 on both axes covers every direction.
+--
+-- The part pointing at the viewer is returned too: it never moves anything, but
+-- it decides how much of a velocity-aligned particle faces the camera.
+local function emitDirection(c)
+	local f = c.frame
 	local rx = (math.random() * 2 - 1) * c.spreadX
 	local ry = (math.random() * 2 - 1) * c.spreadY
-	return (L * math.cos(rx) + U * math.sin(rx)) * math.cos(ry) + R * math.sin(ry)
-end
-
--- Any two axes perpendicular to `n`, for spreading around a direction that
--- isn't one of the six faces (a sphere's or cylinder's surface normal).
-local function perpendicularAxes(n)
-	local helper = math.abs(n.Y) < 0.99 and Vector3.yAxis or Vector3.xAxis
-	local a = n:Cross(helper).Unit
-	return a, n:Cross(a)
-end
-
--- Where a particle spawns and which way it leaves, following ParticleEmitter's
--- Shape / ShapeStyle / ShapeInOut / ShapePartial. Sampled in the emitter's own
--- space, where the face frames are axis-aligned, so multiplying by halfSize
--- component-wise stretches the unit shape to the emitter's box — then rotated
--- into camera space once at the end.
-local function emitShape3D(c)
-	local face = c.face
-	local L, U, R = face.L, face.U, face.R
-	local h = c.halfSize
-	local shape = c.Shape
-	local surface = c.ShapeStyle == "Surface"
-	local pos, dir
-
-	if shape == "Sphere" then
-		-- ShapePartial is the cap's angle as a fraction of the full sphere,
-		-- measured from the EmissionDirection pole: 1 whole, 0.5 a dome, 0 the
-		-- pole alone. cos(theta) uniform is uniform over the cap's area.
-		local cosMax = math.cos(math.pi * c.ShapePartial)
-		local cosT = 1 - math.random() * (1 - cosMax)
-		local sinT = math.sqrt(math.max(0, 1 - cosT * cosT))
-		local phi = math.random() * (2 * math.pi)
-		local n = L * cosT + (U * math.cos(phi) + R * math.sin(phi)) * sinT
-		local r = surface and 1 or math.random() ^ (1 / 3)
-		pos = n * h * r
-		local a, b = perpendicularAxes(n)
-		dir = spreadDirection(c, n, a, b)
-	elseif shape == "Cylinder" then
-		-- Runs along R, emitting radially from it. ShapePartial tapers the +R
-		-- end's radius: 1 is a straight cylinder, 0 a cone.
-		local t = math.random() * 2 - 1
-		local taper = lerp(1, c.ShapePartial, (t + 1) * 0.5)
-		local phi = math.random() * (2 * math.pi)
-		local radial = L * math.cos(phi) + U * math.sin(phi)
-		local r = surface and 1 or math.sqrt(math.random())
-		pos = (radial * (r * taper) + R * t) * h
-		dir = spreadDirection(c, radial, R, radial:Cross(R))
-	elseif shape == "Disc" then
-		-- Lies across the face, through the emitter's centre. ShapePartial is
-		-- how far the hole in the middle reaches in: 1 a solid disc, near 0 a
-		-- thin rim. Square-root sampling keeps the density even across the area.
-		local inner = 1 - c.ShapePartial
-		local r = math.sqrt(lerp(inner * inner, 1, math.random()))
-		local phi = math.random() * (2 * math.pi)
-		pos = (U * math.cos(phi) + R * math.sin(phi)) * h * r
-		dir = spreadDirection(c, L, U, R)
-	else -- "Box"
-		if surface then
-			-- Only the emitting face itself.
-			pos = (L + U * (math.random() * 2 - 1) + R * (math.random() * 2 - 1)) * h
-		else
-			pos = Vector3.new(math.random() * 2 - 1, math.random() * 2 - 1, math.random() * 2 - 1) * h
-		end
-		dir = spreadDirection(c, L, U, R)
-	end
-
-	local inOut = c.ShapeInOut
-	if inOut == "Inward" or (inOut == "InAndOut" and math.random() < 0.5) then
-		dir = -dir
-	end
-
-	local rot = c.rotCF
-	return rot:VectorToWorldSpace(pos), rot:VectorToWorldSpace(dir)
-end
-
--- Perspective scale for a particle `z` pixels toward the viewer, or nil when
--- the camera couldn't see it (level with or behind the lens).
-local function perspective(c, z)
-	local d = c.cameraPx
-	if d <= 0 then return 1 end
-	local denom = d - z
-	if denom <= d * NEAR_CLIP then return nil end
-	return d / denom
-end
-
--- Where a particle is right now, in the coordinate space it lives in: the
--- parent's own unscaled pixels when locked, absolute screen pixels when not.
--- `s` is its perspective scale, `uis` the parent's UIScale factor.
-local function particleSpace(p, s, uis)
-	local k = p.locked and s or s * uis
-	return p.ax + p.posX * k, p.ay + p.posY * k
+	local d = (f.L * math.cos(rx) + f.U * math.sin(rx)) * math.cos(ry) + f.R * math.sin(ry)
+	-- The screen is Y-down.
+	return d.X, -d.Y, d.Z
 end
 
 --------------------------------------------------------------------------------------
@@ -690,71 +588,55 @@ local function spawnParticle(emitter)
 	-- to something that isn't a GuiObject (a Part, a Script, ServerStorage) has
 	-- to be caught. Reading AbsoluteSize off one of those is a hard error, not
 	-- nil, and there's nowhere to draw a particle anyway.
-	local baseObj = emitter.base
-	if not isRenderable(baseObj) then return end
-	local uis = emitter.uiScale or 1
-	-- The parent's own unscaled pixels: the space offsets are measured in.
-	local size = baseObj.AbsoluteSize / uis
+	if not isRenderable(emitter.base) then return end
 
-	local life = randRange(c.Lifetime)
-	if c.is3D then
-		-- ParticleEmitter emits nothing at a zero lifetime, and caps it at 20s.
-		if life <= 0 then return end
-		life = math.min(life, MAX_LIFETIME_3D)
-	elseif life <= 0 then
-		life = 0.0001
-	end
+	-- As on a ParticleEmitter: a zero lifetime emits nothing, and nothing lives
+	-- past 20 seconds.
+	local life = math.min(randRange(c.Lifetime), MAX_LIFETIME)
+	if life <= 0 then return end
 
 	local p = getState(emitter)
 	p.age, p.life = 0, life
 
-	-- A particle is an anchor plus an offset from it. The anchor is fixed at
-	-- spawn; the offset is what moves. In 2D the anchor is the spawn point and
-	-- the offset starts at zero. In 3D the anchor is the emitter's centre — the
-	-- point the virtual camera looks at — and the offset starts wherever the
-	-- Shape put the particle, depth included, so perspective pulls particles
-	-- toward and away from the right point.
-	--
-	-- The anchor is stored in the parent's own pixels when locked, and as an
-	-- absolute screen position when not. Stamped onto the particle (p.locked)
-	-- rather than re-read live at render time — if LockedToGui gets toggled
-	-- while this particle is still alive, its anchor should keep meaning
-	-- whatever it meant when it was computed (a local offset vs. an absolute
-	-- screen position are not interchangeable), or the particle would jump to a
-	-- nonsense position the instant the attribute changes instead of only
-	-- affecting particles spawned afterward.
-	local ax, ay
-	local vx, vy, vz = 0, 0, 0
+	-- Velocity from the face direction +/- spread, in the parent's own pixels.
+	local dx, dy, dz = emitDirection(c)
 	local speed = randRange(c.Speed) * c.PixelsPerStud
-	if c.is3D then
-		local offset, dir = emitShape3D(c)
-		ax, ay = c.Origin.X * size.X, c.Origin.Y * size.Y
-		-- Camera space is Y-up; the screen is Y-down.
-		p.posX, p.posY, p.posZ = offset.X, -offset.Y, offset.Z
-		vx, vy, vz = dir.X * speed, -dir.Y * speed, dir.Z * speed
-	else
-		-- Velocity from base direction +/- spread.
-		local ang = c.baseAngle + (math.random() * 2 - 1) * c.spreadRad
-		vx = math.cos(ang) * speed
-		vy = math.sin(ang) * speed
-		ax, ay = emitPosition(c, size)
-		p.posX, p.posY, p.posZ = 0, 0, 0
-	end
-	if c.VelocityInheritance ~= 0 and emitter.baseVel then
-		vx += emitter.baseVel.X * c.VelocityInheritance
-		vy += emitter.baseVel.Y * c.VelocityInheritance
-	end
-	p.velX, p.velY, p.velZ = vx, vy, vz
+	local vx, vy, vz = dx * speed, dy * speed, dz * speed
 
+	-- A particle lives in one of two spaces, stamped onto it (p.locked) at spawn
+	-- rather than re-read live at render time — if LockedToGui gets toggled
+	-- while this particle is still alive, its stored position and velocity
+	-- should keep meaning whatever they meant when they were computed, or the
+	-- particle would jump to a nonsense position the instant the attribute
+	-- changes instead of only affecting particles spawned afterward.
+	--   Locked:   the parent's own pixels and frame. The renderer carries the
+	--             particle along as the parent moves, scales or turns — which is
+	--             exactly what LockedToPart does to a part's particles.
+	--   Unlocked: absolute screen pixels. Placed once, then left behind.
+	local lx, ly = emitPosition(c, emitter.localSize)
+	local inherit = c.VelocityInheritance
 	p.locked = c.LockedToGui
-	if not p.locked then
-		local ap = baseObj.AbsolutePosition
-		ax, ay = ap.X + ax * uis, ap.Y + ay * uis
+	if p.locked then
+		p.x, p.y = lx, ly
+		if inherit ~= 0 then
+			vx += emitter.inheritLocalX * inherit
+			vy += emitter.inheritLocalY * inherit
+		end
+	else
+		p.x, p.y = toScreen(emitter, lx, ly)
+		-- The emission direction turns with the parent, like a rotated part's.
+		local s, cs, sn = emitter.uiScale, emitter.cos, emitter.sin
+		vx, vy = (vx * cs - vy * sn) * s, (vx * sn + vy * cs) * s
+		vz *= s
+		if inherit ~= 0 then
+			vx += emitter.inheritScreenX * inherit
+			vy += emitter.inheritScreenY * inherit
+		end
 	end
-	p.ax, p.ay = ax, ay
+	p.vx, p.vy, p.vz = vx, vy, vz
 
-	-- Depth parallax (2D only; 3D has a real depth axis instead).
-	local depth = c.is3D and 0 or randRange(c.Depth)
+	-- Depth parallax.
+	local depth = randRange(c.Depth)
 	p.depth = depth
 	if depth > 0 then p.depthMul = 1 / (depth + 1)
 	elseif depth < 0 then p.depthMul = -depth + 1
@@ -762,16 +644,12 @@ local function spawnParticle(emitter)
 
 	p.rot = randRange(c.Rotation)
 	p.rotSpeed = randRange(c.RotSpeed)
-	-- Where each sequence's envelope lands for this particle. 2D has always
-	-- shared one roll across Size, Transparency and Squash; ParticleEmitter
-	-- rolls each separately, so 3D does too.
-	p.env = math.random() * 2 - 1
-	if c.is3D then
-		p.envT = math.random() * 2 - 1
-		p.envQ = math.random() * 2 - 1
-	else
-		p.envT, p.envQ = p.env, p.env
-	end
+	-- Where each sequence's envelope lands for this particle. ParticleEmitter
+	-- rolls every sequence separately, so a particle that comes out large isn't
+	-- also, by coincidence, the most transparent.
+	p.envS = math.random() * 2 - 1
+	p.envT = math.random() * 2 - 1
+	p.envQ = math.random() * 2 - 1
 	p.seed = math.random() * 1000
 	p.nextTrail = c.TrailInterval
 
@@ -799,8 +677,7 @@ local function spawnParticle(emitter)
 	table.insert(emitter.particles, p)
 
 	if Spark2D.ParticleSpawned:HasListeners() then
-		local x, y = particleSpace(p, (c.is3D and perspective(c, p.posZ)) or 1, uis)
-		Spark2D.ParticleSpawned:Fire(emitter.folder, x, y)
+		Spark2D.ParticleSpawned:Fire(emitter.folder, p.x, p.y)
 	end
 	return p
 end
@@ -844,40 +721,39 @@ end
 --------------------------------------------------------------------------------------
 -- RENDER TRANSFORM (shared by particles, glow copies and ghosts)
 --------------------------------------------------------------------------------------
--- x, y: a position in the particle's own space (see particleSpace), turned
--- into an offset from the parent here. An unlocked position is absolute screen
--- pixels, so it's measured from the parent's corner and then divided back into
--- the parent's unscaled pixels, the space an offset Position lives in.
+-- x, y: a position in the particle's own space — the parent's pixels if locked,
+-- the screen's if not — turned into the offset Position the image needs.
+-- `screenRot` is the rotation the particle should have ON SCREEN; the image
+-- inherits the parent's AbsoluteRotation, so that is taken back off.
 --
 -- Offsets are whole pixels, and Roblox truncates whatever it's given: every
 -- particle came out up to a pixel smaller than it should, and anything left of
--- or above its anchor was pulled a pixel toward it. Rounding keeps the error
--- to half a pixel either way, which matters at the sizes a 3D effect seen from
--- a distance ends up at.
+-- or above the parent's corner was pulled a pixel toward it. Rounding keeps the
+-- error to half a pixel either way.
 local round = math.round
-local function renderImage(c, img, locked, x, y, w, h, rot, absPos, uis, ref, color, trans, rectOff, rectSize)
+local function renderImage(c, emitter, img, locked, x, y, w, h, screenRot, color, trans, rectOff, rectSize)
 	img.ImageColor3 = color
 	img.ImageTransparency = trans
-	img.Rotation = rot
+	img.Rotation = screenRot - emitter.rotation
 	if rectSize then
 		img.ImageRectOffset = rectOff
 		img.ImageRectSize = rectSize
 	end
-	if locked then
-		img.Position = UDim2.fromOffset(round(x), round(y))
-	else
-		img.Position = UDim2.fromOffset(round((x - absPos.X) / uis), round((y - absPos.Y) / uis))
+	if not locked then
+		x, y = toLocal(emitter, x, y)
 	end
+	img.Position = UDim2.fromOffset(round(x), round(y))
 	-- w and h arrive in whichever unit SizingMode implies: a fraction of the
 	-- parent GuiObject under Scale, pixels under Offset. Emitting a Scale size as
 	-- UDim2.fromScale is what lets Roblox keep particles tracking a parent that
 	-- resizes after registration, which an offset size can't do.
-	if c.useScaleSizing then
+	if c.SizingMode == "Scale" then
 		if c.PerfectSquare then
 			-- Square on screen, not square in scale units: 1.0 x 1.0 scale on a
 			-- 200x100 parent is a 2:1 rectangle. Convert both axes to pixels, take
 			-- the smaller (so the particle stays inside the box the way a
 			-- UIAspectRatioConstraint would), then convert back.
+			local ref = emitter.referenceSize
 			local side = math.min(w * ref.X, h * ref.Y)
 			img.Size = UDim2.fromScale(side / ref.X, side / ref.Y)
 		else
@@ -900,7 +776,7 @@ local function getGhost(emitter)
 	return g
 end
 
-local function spawnGhost(emitter, p, x, y, w, h, rot, color, trans, rectOff, rectSize)
+local function spawnGhost(emitter, p, w, h, screenRot, color, trans, rectOff, rectSize)
 	local c = emitter.config
 	if #emitter.ghosts >= emitter.effMax then return end
 	local g = getGhost(emitter)
@@ -911,8 +787,8 @@ local function spawnGhost(emitter, p, x, y, w, h, rot, color, trans, rectOff, re
 	g.age = 0
 	g.life = c.TrailLifetime
 	g.locked = p.locked
-	g.posX, g.posY = x, y
-	g.w, g.h, g.rot = w, h, rot
+	g.x, g.y = p.x, p.y
+	g.w, g.h, g.rot = w, h, screenRot
 	g.color, g.trans = color, trans
 	g.rectOff, g.rectSize = rectOff, rectSize
 	table.insert(emitter.ghosts, g)
@@ -921,44 +797,25 @@ end
 --------------------------------------------------------------------------------------
 -- PER-EMITTER UPDATE (hot loop)
 --------------------------------------------------------------------------------------
-local function refreshReferenceSize(emitter)
-	local base = emitter.base
-	if base and base:IsA("GuiBase2d") then
-		local s = base.AbsoluteSize
-		emitter.referenceSize = Vector2.new(math.max(s.X, 1), math.max(s.Y, 1))
-	end
-end
-
 function Spark2D:_updateEmitter(emitter, dt)
 	local c = emitter.config
-	local is3D = c.is3D
-	local sizeUnit
-	if is3D then
-		-- A ParticleEmitter's Size is half the quad's width in studs — a Size of
-		-- 1 draws a 2-stud square, measured against real parts in Studio.
-		sizeUnit = 2 * c.PixelsPerStud
-	else
-		sizeUnit = c.useScaleSizing and 1 or c.SizePixels
-	end
+	local sizeUnit = (c.SizingMode == "Scale") and 1 or c.SizePixels
 	local particles = emitter.particles
-	local base = emitter.base
-	local absPos = (base and base.AbsolutePosition) or Vector2.zero
-	local uis = emitter.uiScale or 1
-	refreshReferenceSize(emitter)
-	local ref = emitter.referenceSize
 	local hasFlipbook = emitter.hasFlipbook
 	local useSpeedColor = c.UseSpeedColor
-	local depthActive = (not is3D) and c.Depth.Min ~= c.Depth.Max
+	local depthActive = c.Depth.Min ~= c.Depth.Max
 	local emitTime = emitter.time
+	local s, cs, sn, parentRot = emitter.uiScale, emitter.cos, emitter.sin, emitter.rotation
 
 	local windX, windY = c.WindAcceleration.X, c.WindAcceleration.Y
 	local tp, tf, ts = c.TurbulencePower, c.TurbulenceFrequency * 0.01, c.TurbulenceSpeed
 	local diedSignal = Spark2D.ParticleDied:HasListeners()
 
-	-- 3D motion is integrated exactly rather than stepped: with drag, velocity
-	-- relaxes toward a/k along an exponential, so the answer is the same at 30
-	-- fps as at 240 and matches the curve a real ParticleEmitter traces.
-	local k = is3D and c.dragK or 0
+	-- Motion is integrated exactly rather than stepped: with drag, velocity
+	-- relaxes toward a/k along an exponential, so the path is the same at 30 fps
+	-- as at 240 and matches the curve a real ParticleEmitter traces — gravity
+	-- included, which drag caps at a terminal speed.
+	local k = c.dragK
 	local decay, reach = 1, dt
 	if k ~= 0 then
 		decay = math.exp(-k * dt)
@@ -970,170 +827,139 @@ function Spark2D:_updateEmitter(emitter, dt)
 		p.age += dt
 
 		if p.age >= p.life then
-			if diedSignal then
-				local x, y = particleSpace(p, (is3D and perspective(c, p.posZ)) or 1, uis)
-				Spark2D.ParticleDied:Fire(emitter.folder, x, y)
-			end
+			if diedSignal then Spark2D.ParticleDied:Fire(emitter.folder, p.x, p.y) end
 			recycle(emitter, p)
 			local n = #particles
 			particles[i] = particles[n]
 			particles[n] = nil
 		else
-			-- Acceleration = base + wind + turbulence. Turbulence samples the
-			-- noise field where the particle actually is on screen.
-			local vx, vy, vz = p.velX, p.velY, p.velZ
+			local locked = p.locked
+
+			-- Acceleration = base + wind + turbulence. Like ParticleEmitter's, it
+			-- acts in world space — down the screen stays down the screen however
+			-- the parent is turned — so it's carried into the particle's own space:
+			-- the parent's frame for a locked particle, screen pixels otherwise.
 			local ax, ay = c.accelScreenX + windX, c.accelScreenY + windY
 			if tp ~= 0 then
-				local nx, ny = particleSpace(p, 1, uis)
-				ax += math.noise(nx * tf, ny * tf, emitTime * ts + p.seed) * tp
-				ay += math.noise(nx * tf + 37.1, ny * tf + 11.7, emitTime * ts + p.seed) * tp
+				ax += math.noise(p.x * tf, p.y * tf, emitTime * ts + p.seed) * tp
+				ay += math.noise(p.x * tf + 37.1, p.y * tf + 11.7, emitTime * ts + p.seed) * tp
+			end
+			if locked then
+				ax, ay = ax * cs + ay * sn, ay * cs - ax * sn
+			else
+				ax, ay = ax * s, ay * s
 			end
 
-			local s = 1
-			if is3D then
-				local az = c.accelScreenZ
-				if k ~= 0 then
-					local tx, ty, tz = ax / k, ay / k, az / k
-					p.posX += tx * dt + (vx - tx) * reach
-					p.posY += ty * dt + (vy - ty) * reach
-					p.posZ += tz * dt + (vz - tz) * reach
-					vx = tx + (vx - tx) * decay
-					vy = ty + (vy - ty) * decay
-					vz = tz + (vz - tz) * decay
-				else
-					p.posX += (vx + 0.5 * ax * dt) * dt
-					p.posY += (vy + 0.5 * ay * dt) * dt
-					p.posZ += (vz + 0.5 * az * dt) * dt
-					vx += ax * dt
-					vy += ay * dt
-					vz += az * dt
-				end
-				p.velX, p.velY, p.velZ = vx, vy, vz
-				s = perspective(c, p.posZ)
+			-- Depth scales apparent movement + size (parallax).
+			local dm = p.depthMul
+			local vx, vy = p.vx, p.vy
+			if k ~= 0 then
+				local tx, ty = ax / k, ay / k
+				p.x += (tx * dt + (vx - tx) * reach) * dm
+				p.y += (ty * dt + (vy - ty) * reach) * dm
+				vx = tx + (vx - tx) * decay
+				vy = ty + (vy - ty) * decay
+				p.vz *= decay
 			else
-				-- Linear drag, then depth scales apparent movement (parallax).
-				vx += (ax - c.Drag * vx) * dt
-				vy += (ay - c.Drag * vy) * dt
-				p.velX, p.velY = vx, vy
-				local dm = p.depthMul
-				p.posX += vx * dm * dt
-				p.posY += vy * dm * dt
+				p.x += (vx + 0.5 * ax * dt) * dt * dm
+				p.y += (vy + 0.5 * ay * dt) * dt * dm
+				vx += ax * dt
+				vy += ay * dt
 			end
+			p.vx, p.vy = vx, vy
 			p.rot += p.rotSpeed * dt
 
-			if not s then
-				-- Behind the virtual camera: alive, moving, but not drawable.
-				p.image.ImageTransparency = 1
-				if p.glow then p.glow.ImageTransparency = 1 end
+			local t = p.age / p.life
+			local sizeV = sampleNumberE(emitter.sizeLUT, emitter.sizeEnv, t, p.envS)
+			local transV = sampleNumberE(emitter.transLUT, emitter.transEnv, t, p.envT)
+			local squashV = sampleNumberE(emitter.squashLUT, emitter.squashEnv, t, p.envQ)
+			local col = sampleColor(emitter.colorLUT, t)
+
+			-- Colour / alpha over speed, measured in the parent's own pixels so a
+			-- UIScale doesn't shift it.
+			local vz = p.vz
+			if useSpeedColor then
+				local sp = math.sqrt(vx * vx + vy * vy + vz * vz)
+				if not locked then sp /= s end
+				local sr = c.SpeedRange
+				local st = clamp((sp - sr.Min) / math.max(sr.Max - sr.Min, 1e-6), 0, 1)
+				local sc = sampleColor(emitter.speedColorLUT, st)
+				col = Color3.new(col.R * sc.R, col.G * sc.G, col.B * sc.B)
+				transV = clamp(transV + sampleNumber(emitter.speedTransLUT, st), 0, 1)
+			end
+
+			-- Depth fade.
+			if depthActive then
+				local ratio = (p.depth - c.Depth.Min) / math.max(c.Depth.Max - c.Depth.Min, 1e-6)
+				local dtv = sampleNumber(emitter.depthTransLUT, t) * ratio
+				transV = clamp(transV + (1 - transV) * dtv, 0, 1)
+			end
+
+			-- Under Scale, Size reads as a straight fraction of the parent (1 = the
+			-- parent's full size, like UDim2.fromScale) and SizePixels plays no
+			-- part; under Offset it's a multiplier on SizePixels. Either way the
+			-- Size sequence is the multiplier and renderImage applies the unit.
+			local diameter = sizeV * sizeUnit * dm
+
+			-- ParticleEmitter's Squash: positive narrows the particle by (1 + q)
+			-- and makes it that much taller, negative the other way round, and the
+			-- two sides mirror each other.
+			local w, h
+			local f = 1 + math.abs(squashV)
+			if squashV >= 0 then
+				w, h = diameter / f, diameter * f
 			else
-				local t = p.age / p.life
-				local sizeV = sampleNumberE(emitter.sizeLUT, emitter.sizeEnv, t, p.env)
-				local transV = sampleNumberE(emitter.transLUT, emitter.transEnv, t, p.envT)
-				local squashV = sampleNumberE(emitter.squashLUT, emitter.squashEnv, t, p.envQ)
-				local col = sampleColor(emitter.colorLUT, t)
+				w, h = diameter * f, diameter / f
+			end
 
-				-- Colour / alpha over speed.
-				if useSpeedColor then
-					local sp = math.sqrt(vx * vx + vy * vy + vz * vz)
-					local sr = c.SpeedRange
-					local st = clamp((sp - sr.Min) / math.max(sr.Max - sr.Min, 1e-6), 0, 1)
-					local sc = sampleColor(emitter.speedColorLUT, st)
-					col = Color3.new(col.R * sc.R, col.G * sc.G, col.B * sc.B)
-					transV = clamp(transV + sampleNumber(emitter.speedTransLUT, st), 0, 1)
-				end
-
-				-- Depth fade.
-				if depthActive then
-					local ratio = (p.depth - c.Depth.Min) / math.max(c.Depth.Max - c.Depth.Min, 1e-6)
-					local dtv = sampleNumber(emitter.depthTransLUT, t) * ratio
-					transV = clamp(transV + (1 - transV) * dtv, 0, 1)
-				end
-
-				-- Under Scale, Size reads as a straight fraction of the parent (1 = the
-				-- parent's full size, like UDim2.fromScale) and SizePixels plays no
-				-- part; under Offset it's a multiplier on SizePixels; in 3D it's studs.
-				-- Either way the Size sequence is the multiplier and renderImage
-				-- applies the unit.
-				local diameter = sizeV * sizeUnit * p.depthMul * s
-				local w, h
-				if is3D then
-					-- ParticleEmitter's Squash: positive narrows by (1 + q) and grows
-					-- tall by the same factor, negative the other way round, and the
-					-- two sides mirror each other.
-					local f = 1 + math.abs(squashV)
-					if squashV >= 0 then
-						w, h = diameter / f, diameter * f
-					else
-						w, h = diameter * f, diameter / f
-					end
+			-- Orientation, as a rotation on screen.
+			local screenRot
+			local ori = c.Orientation
+			local flat = vx * vx + vy * vy
+			local full = flat + vz * vz
+			if (ori == "VelocityParallel" or ori == "VelocityPerpendicular") and full > 1e-9 then
+				-- Width runs along the direction of travel, and a positive Rotation
+				-- turns clockwise from there. Travel toward or away from the viewer
+				-- foreshortens that width: a Parallel particle contains its
+				-- velocity, so it thins as travel turns toward the camera; a
+				-- Perpendicular one faces along it, so it's seen edge-on while
+				-- crossing the screen and opens up as it turns toward the camera.
+				local travel = getAngle(vx, vy)
+				if locked then travel += parentRot end
+				screenRot = travel + p.rot
+				local fore
+				if ori == "VelocityParallel" then
+					fore = math.sqrt(flat / full)
 				else
-					local sq = clamp(squashV, -0.99, 5)
-					w = diameter * (1 + sq)
-					h = diameter / (1 + sq)
+					fore = math.abs(vz) / math.sqrt(full)
 				end
+				w *= math.max(fore, MIN_FORESHORTEN)
+			else
+				-- Camera-facing, which is every other mode. A ParticleEmitter turns
+				-- these counter-clockwise for a positive Rotation (measured in
+				-- Studio, whatever the docs say) and keeps them upright on screen
+				-- however its part is turned.
+				screenRot = -p.rot
+			end
 
-				-- Orientation.
-				local finalRot
-				local ori = c.Orientation
-				if is3D then
-					if ori == "VelocityParallel" or ori == "VelocityPerpendicular" then
-						-- Width runs along the direction of travel, and a positive
-						-- Rotation turns clockwise from there. Moving toward or away
-						-- from the camera foreshortens that width: Parallel's quad
-						-- contains the velocity, so it shrinks as travel turns
-						-- toward the lens; Perpendicular's faces it, so it shrinks
-						-- as travel turns across the screen.
-						local flat = vx * vx + vy * vy
-						local full = flat + vz * vz
-						if full > 1e-9 then
-							finalRot = p.rot + getAngle(vx, vy)
-							local fore
-							if ori == "VelocityParallel" then
-								fore = math.sqrt(flat / full)
-							else
-								fore = math.abs(vz) / math.sqrt(full)
-							end
-							w *= math.max(fore, MIN_FORESHORTEN)
-						else
-							finalRot = p.rot
-						end
-					else
-						-- A camera-facing ParticleEmitter turns counter-clockwise
-						-- for a positive Rotation (measured in Studio, whatever the
-						-- docs say); GuiObject.Rotation turns clockwise.
-						finalRot = -p.rot
-					end
-				elseif ori == "VelocityParallel" then
-					finalRot = p.rot + getAngle(vx, vy) + 90
-				elseif ori == "VelocityPerpendicular" then
-					finalRot = p.rot + getAngle(vx, vy)
-				elseif ori == "FacingCamera" or ori == "FacingCameraWorldUp" then
-					finalRot = 0
-				else
-					finalRot = p.rot
-				end
+			local rectOff, rectSize
+			if hasFlipbook then
+				rectOff, rectSize = computeFlipbook(emitter, p, t)
+			end
 
-				local rectOff, rectSize
-				if hasFlipbook then
-					rectOff, rectSize = computeFlipbook(emitter, p, t)
-				end
+			-- Glow copy (drawn behind, larger, brighter, more transparent).
+			if p.glow then
+				local gcol = col:Lerp(Color3.new(1, 1, 1), 0.35)
+				local gtrans = clamp(1 - (1 - transV) * c.Glow, 0, 1)
+				renderImage(c, emitter, p.glow, locked, p.x, p.y, w * 1.9, h * 1.9, screenRot, gcol, gtrans, rectOff, rectSize)
+			end
 
-				local x, y = particleSpace(p, s, uis)
+			renderImage(c, emitter, p.image, locked, p.x, p.y, w, h, screenRot, col, transV, rectOff, rectSize)
 
-				-- Glow copy (drawn behind, larger, brighter, more transparent).
-				if p.glow then
-					local gcol = col:Lerp(Color3.new(1, 1, 1), 0.35)
-					local gtrans = clamp(1 - (1 - transV) * c.Glow, 0, 1)
-					renderImage(c, p.glow, p.locked, x, y, w * 1.9, h * 1.9, finalRot, absPos, uis, ref, gcol, gtrans, rectOff, rectSize)
-				end
-
-				renderImage(c, p.image, p.locked, x, y, w, h, finalRot, absPos, uis, ref, col, transV, rectOff, rectSize)
-
-				-- Trails.
-				if c.TrailEnabled and p.age >= p.nextTrail then
-					spawnGhost(emitter, p, x, y, w, h, finalRot, col, transV, rectOff, rectSize)
-					p.nextTrail += c.TrailInterval
-				end
+			-- Trails.
+			if c.TrailEnabled and p.age >= p.nextTrail then
+				spawnGhost(emitter, p, w, h, screenRot, col, transV, rectOff, rectSize)
+				p.nextTrail += c.TrailInterval
 			end
 		end
 	end
@@ -1153,7 +979,7 @@ function Spark2D:_updateEmitter(emitter, dt)
 			ghosts[n] = nil
 		else
 			local tr = clamp(g.trans + (1 - g.trans) * gt, 0, 1)
-			renderImage(c, g.image, g.locked, g.posX, g.posY, g.w, g.h, g.rot, absPos, uis, ref, g.color, tr, g.rectOff, g.rectSize)
+			renderImage(c, emitter, g.image, g.locked, g.x, g.y, g.w, g.h, g.rot, g.color, tr, g.rectOff, g.rectSize)
 		end
 	end
 end
@@ -1194,24 +1020,29 @@ function Spark2D:_update(dt)
 					for i = #emitter.ghosts, 1, -1 do recycleImage(emitter, emitter.ghosts[i].image); emitter.ghosts[i].image = nil; table.insert(emitter.ghostPool, emitter.ghosts[i]); emitter.ghosts[i] = nil end
 				end
 				emitter.emitAge = 0
+				emitter.lastCenter = nil
 			else
 				local c = emitter.config
 				local edt = scaled * c.TimeScale
 				emitter.time += edt
 				emitter.effMax = math.max(1, math.floor(c.MaxParticles * self._quality))
-				-- Re-read every frame rather than cached: a UIScale is exactly the
-				-- sort of thing that gets tweened.
-				emitter.uiScale = uiScaleOf(emitter.base)
+				-- Re-read every frame rather than cached: position, size, UIScale
+				-- and rotation are all exactly the sort of thing that gets tweened.
+				refreshView(emitter)
 
-				-- Base velocity for VelocityInheritance, in the parent's own pixels
-				-- per second like every other velocity.
-				local ap = emitter.base.AbsolutePosition
-				if emitter.lastBasePos and edt > 0 then
-					emitter.baseVel = (ap - emitter.lastBasePos) / (edt * emitter.uiScale)
-				else
-					emitter.baseVel = Vector2.zero
+				-- The parent's own velocity, for VelocityInheritance: its centre's
+				-- motion across the screen, and the same in its own frame.
+				local cx, cy = emitter.centerX, emitter.centerY
+				local last = emitter.lastCenter
+				local ivx, ivy = 0, 0
+				if last and edt > 0 then
+					ivx, ivy = (cx - last.X) / edt, (cy - last.Y) / edt
 				end
-				emitter.lastBasePos = ap
+				emitter.lastCenter = Vector2.new(cx, cy)
+				emitter.inheritScreenX, emitter.inheritScreenY = ivx, ivy
+				local s, cs, sn = emitter.uiScale, emitter.cos, emitter.sin
+				emitter.inheritLocalX = (ivx * cs + ivy * sn) / s
+				emitter.inheritLocalY = (ivy * cs - ivx * sn) / s
 
 				-- Emission (rate) gated by Enabled + EmitDelay/EmitDuration.
 				if c.Enabled then
@@ -1270,18 +1101,34 @@ function Spark2D:_register(folder, container)
 		rateAccum = 0,
 		emitAge = 0,
 		time = 0,
-		uiScale = 1,
 		effMax = DEFAULTS.MaxParticles,
 		cleaner = self._cleaner:Extend(),
+
+		-- Placeholder view until the parent can be measured: an unscaled,
+		-- unrotated 100x100 box at the origin.
+		uiScale = 1,
+		rotation = 0,
+		cos = 1,
+		sin = 0,
+		halfW = 50,
+		halfH = 50,
+		centerX = 50,
+		centerY = 50,
+		localSize = Vector2.new(100, 100),
+		referenceSize = Vector2.new(100, 100),
+		inheritScreenX = 0,
+		inheritScreenY = 0,
+		inheritLocalX = 0,
+		inheritLocalY = 0,
 	}
 
 	local base = emitter.base
 	if self.WarnUnparented and not isRenderable(base) then
 		warn(("[Spark2D] '%s' is not (yet) under a GuiObject/ScreenGui; it will render once it is."):format(folder.Name))
 	end
-
-	emitter.referenceSize = Vector2.new(100, 100)
-	refreshReferenceSize(emitter)
+	if isRenderable(base) then
+		refreshView(emitter)
+	end
 
 	buildConfig(emitter)
 
@@ -1298,7 +1145,10 @@ function Spark2D:_register(folder, container)
 			self:Stop(folder)
 		else
 			emitter.base = folder.Parent
-			refreshReferenceSize(emitter)
+			emitter.lastCenter = nil
+			if isRenderable(emitter.base) then
+				refreshView(emitter)
+			end
 		end
 	end)
 
@@ -1381,7 +1231,7 @@ end
 local function prepareBurst(self, emitter)
 	emitter.effMax = math.max(1, math.floor(emitter.config.MaxParticles * self._quality))
 	if isRenderable(emitter.base) then
-		emitter.uiScale = uiScaleOf(emitter.base)
+		refreshView(emitter)
 	end
 end
 
