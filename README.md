@@ -2,7 +2,7 @@
 
 Spark2D makes `ParticleEmitter`-style effects work inside a `ScreenGui`.
 
-Roblox won't let a real `ParticleEmitter` live in 2D UI, so Spark2D fakes it. An effect is a plain `Folder` holding Attributes, and the runtime plays it back with a pool of recycled `ImageLabel`s. It moves the way a real particle effect does, and you can inspect every setting in the Properties window.
+Roblox won't let a real `ParticleEmitter` live in 2D UI, so Spark2D fakes it. An effect is a plain `Folder` holding Attributes, and the runtime plays it back with a pool of recycled `ImageLabel`s. It moves the way a real particle effect does, and its settings are plain attributes you can inspect in the Properties window.
 
 ```lua
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -56,7 +56,7 @@ Spark2D drives `PlayerGui` and uses `RunService`, so `require` it from a **Local
 
 ## Creating an effect
 
-An effect is a `Folder` tagged `UIParticleEmitter`, parented under a `GuiObject`. Everything else is Attributes, and anything you don't set uses the default listed in the [attribute reference](#attribute-reference).
+An effect is a `Folder` tagged `UIParticleEmitter`, parented under a `GuiObject`. Everything else is Attributes, and anything you don't set uses the default listed in the [attribute reference](#attribute-reference). Only set what you change. A folder that also spells out every default is bigger for no gain, and in places that use [Server Authority](#server-authority) that size matters.
 
 ```lua
 local CollectionService = game:GetService("CollectionService")
@@ -197,6 +197,33 @@ A fake third axis. Each particle picks a random depth when it spawns, and partic
 | `FlipbookFramerate` | range | `20` to `20` | Frames per second, picked per particle. `OneShot` ignores it. |
 | `FlipbookStartRandom` | bool | `false` | Start each particle on a random frame. |
 | `FlipbookResolution` | number | `1024` | The texture's width and height in pixels. The sheet has to be square, and Roblox doesn't tell scripts a texture's size, so this has to be right for the frames to line up. |
+
+---
+
+## Server Authority
+
+Places that use Server Authority (`Workspace.AuthorityMode` set to `Server`) limit the attributes an instance can carry:
+
+- at most **1024 bytes** of attribute data, and at most **64** attributes;
+- names, and text values such as `Texture`, up to **50 characters**.
+
+An effect folder over those limits loses some of its attributes when the place loads, on the server and on every client, and Spark2D plays it with defaults in their place. You don't get to choose which ones go. A server script that tries to go over gets the error `Attribute total payload exceeds 1024 bytes`.
+
+Each attribute costs 6 bytes, plus its name, plus its value:
+
+| Value | Bytes |
+|---|---|
+| bool | 1 |
+| number, range, `Vector2` | 8 |
+| string | length + 4 |
+| `NumberSequence` | 4 + 12 per keypoint |
+| `ColorSequence` | 4 + 20 per keypoint |
+
+Spark2D reads every missing attribute as its default, so an effect only needs the ones it changes, and a typical one comes to a few hundred bytes. All the defaults written out come to about 1.5 KB, which is over the limit before anything has been changed. So:
+
+- Only set the attributes you change.
+- Keep sequences to the keypoints they need.
+- Effects made with version 1.0.3 or earlier of the Studio plugin store every default. Open the place with the current plugin, which trims each folder down to the settings that differ, then save and publish it.
 
 ---
 
@@ -382,3 +409,7 @@ end
 **Effects run too fast or too slow after `SetTimeScale`.** The global time scale multiplies with each folder's own `TimeScale`, so check both.
 
 **`MoveWithParent` doesn't seem to do anything.** You only see a difference when the parent moves while particles are alive.
+
+**Some settings are ignored in a Server Authority place.** The folder was over the attribute limit, so the place dropped some of its attributes when it loaded. See [Server Authority](#server-authority).
+
+**`Attribute total payload exceeds 1024 bytes`.** Something on the server tried to give an instance more attributes than Server Authority allows: one of your scripts, or a Studio plugin from 1.0.3 or earlier running in a playtest's server. See [Server Authority](#server-authority).

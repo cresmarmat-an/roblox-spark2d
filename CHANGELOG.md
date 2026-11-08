@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **`Attribute total payload exceeds 1024 bytes` in places that use Server
+  Authority** ([#2](https://github.com/cresmarmat-an/roblox-spark2d/issues/2)).
+  With `Workspace.AuthorityMode` set to `Server`, an instance keeps at most
+  1024 bytes of attributes. The Studio plugin wrote every default into its
+  effect folders, about 1.5 KB, so it threw this error while loading in a
+  playtest's server. Those places also dropped some of each effect's
+  attributes when they loaded, so the effect played with defaults in their
+  place. The plugin now stores only the settings you change and trims folders
+  saved by older versions when it opens a place. The runtime didn't need to
+  change: it has always read a missing attribute as its default.
+
+### Documentation
+
+- The README covers Server Authority's attribute limits, what each attribute
+  costs, and why an effect should only store the settings it changes.
+
 ## 1.0.3-alpha
 
 An early look at the next version. Effects are measured relative to their
