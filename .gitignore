@@ -21,8 +21,5 @@ wally.lock
 .DS_Store
 Thumbs.db
 
-# Claude Code local session settings
-.claude/settings.local.json
-
 # Wally install output inside the package source
 /src/Packages/
