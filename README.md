@@ -46,7 +46,7 @@ ReplicatedStorage/
       Pool
 ```
 
-**[Studio plugin](https://create.roblox.com/store/asset/134544269563881/Spark2D)**: builds and previews effects visually, converts real `ParticleEmitter`s, and its INSTALL RUNTIME button places the module in the same layout. It isn't publicly listed yet. Everything here also works from a script.
+**[Studio plugin](https://create.roblox.com/store/asset/103586465800811/Spark2D)**: builds and previews effects visually, converts real `ParticleEmitter`s, and its INSTALL RUNTIME button places the module in the same layout. It isn't publicly listed yet. Everything here also works from a script.
 
 Leave the three dependencies where the installer put them. `Spark2D` looks for each one as its own child first and then as a sibling, which is how Wally lays them out.
 
