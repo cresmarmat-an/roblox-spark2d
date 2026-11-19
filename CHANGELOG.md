@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.3
 
 ### Fixed
 
@@ -15,10 +15,7 @@
   saved by older versions when it opens a place. The runtime didn't need to
   change: it has always read a missing attribute as its default.
 
-### Documentation
-
-- The README covers Server Authority's attribute limits, what each attribute
-  costs, and why an effect should only store the settings it changes.
+- Various bug fixes and improvements!
 
 ## 1.0.3-alpha
 
